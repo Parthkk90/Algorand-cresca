@@ -1,0 +1,1506 @@
+#pragma version 10
+#pragma typetrack false
+
+// cresca_dart_swap.CrescaDartSwap.__algopy_entrypoint_with_init() -> uint64:
+main:
+    intcblock 1 8 0 16 192
+    bytecblock 0x151f7c75 0x80 0x706c5f 0x00 "fee_bps" 0x0000000000000000 0x257c361f
+    txn ApplicationID
+    bnz main_after_if_else@2
+    // cresca_dart_swap.py:56
+    // self.fee_bps = GlobalState(UInt64(DEFAULT_FEE_BPS))
+    bytec 4 // "fee_bps"
+    pushint 30 // 30
+    app_global_put
+
+main_after_if_else@2:
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txn NumAppArgs
+    bz main_bare_routing@17
+    pushbytess 0x7645c3ae 0x08b2151d 0xc4b1e799 0xdc89f6bb 0x97110753 0x4ef82ef5 0xbb4c88f6 0xd3f13851 0x3c1d3197 0x3e9c10cf 0x5e5da9cb 0x156475a8 // method "set_fee_bps(uint64)bool", method "configure_pool(uint64,bool)bool", method "opt_in_asset(uint64)bool", method "fund_pool_algo(pay,uint64)bool", method "fund_pool_asset(axfer,uint64)bool", method "get_quote_exact_in(uint64,bool,uint64)uint64", method "get_best_quote_exact_in(uint64[],uint64,bool)(uint64,uint64)", method "swap_exact_algo_for_asset(pay,uint64,uint64,address)uint64", method "swap_exact_asset_for_algo(axfer,uint64,uint64,address)uint64", method "get_pool(uint64)(uint64,uint64,uint64,bool)", method "get_fee_bps()uint64", method "fund_contract(pay)bool"
+    txna ApplicationArgs 0
+    match main_set_fee_bps_route@5 main_configure_pool_route@6 main_opt_in_asset_route@7 main_fund_pool_algo_route@8 main_fund_pool_asset_route@9 main_get_quote_exact_in_route@10 main_get_best_quote_exact_in_route@11 main_swap_exact_algo_for_asset_route@12 main_swap_exact_asset_for_algo_route@13 main_get_pool_route@14 main_get_fee_bps_route@15 main_fund_contract_route@16
+
+main_after_if_else@19:
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    intc_2 // 0
+    return
+
+main_fund_contract_route@16:
+    // cresca_dart_swap.py:300
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txn GroupIndex
+    intc_0 // 1
+    -
+    dup
+    gtxns TypeEnum
+    intc_0 // pay
+    ==
+    assert // transaction type is pay
+    // cresca_dart_swap.py:300
+    // @abimethod
+    callsub fund_contract
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_get_fee_bps_route@15:
+    // cresca_dart_swap.py:296
+    // @abimethod(readonly=True)
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    callsub get_fee_bps
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_get_pool_route@14:
+    // cresca_dart_swap.py:289-292
+    // # ------------------------------------------------------------------
+    // # Views
+    // # ------------------------------------------------------------------
+    // @abimethod(readonly=True)
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_dart_swap.py:289-292
+    // # ------------------------------------------------------------------
+    // # Views
+    // # ------------------------------------------------------------------
+    // @abimethod(readonly=True)
+    callsub get_pool
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_swap_exact_asset_for_algo_route@13:
+    // cresca_dart_swap.py:244
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txn GroupIndex
+    intc_0 // 1
+    -
+    dup
+    gtxns TypeEnum
+    pushint 4 // axfer
+    ==
+    assert // transaction type is axfer
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 3
+    dup
+    len
+    pushint 32 // 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    // cresca_dart_swap.py:244
+    // @abimethod
+    callsub swap_exact_asset_for_algo
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_swap_exact_algo_for_asset_route@12:
+    // cresca_dart_swap.py:196-199
+    // # ------------------------------------------------------------------
+    // # Swaps
+    // # ------------------------------------------------------------------
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txn GroupIndex
+    intc_0 // 1
+    -
+    dup
+    gtxns TypeEnum
+    intc_0 // pay
+    ==
+    assert // transaction type is pay
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 3
+    dup
+    len
+    pushint 32 // 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    // cresca_dart_swap.py:196-199
+    // # ------------------------------------------------------------------
+    // # Swaps
+    // # ------------------------------------------------------------------
+    // @abimethod
+    callsub swap_exact_algo_for_asset
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_get_best_quote_exact_in_route@11:
+    // cresca_dart_swap.py:153
+    // @abimethod(readonly=True)
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    intc_2 // 0
+    extract_uint16 // on error: invalid array length header
+    intc_1 // 8
+    *
+    pushint 2 // 2
+    +
+    dig 1
+    len
+    ==
+    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint64>
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 3
+    dup
+    len
+    intc_0 // 1
+    ==
+    assert // invalid number of bytes for arc4.bool
+    // cresca_dart_swap.py:153
+    // @abimethod(readonly=True)
+    callsub get_best_quote_exact_in
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_get_quote_exact_in_route@10:
+    // cresca_dart_swap.py:125-128
+    // # ------------------------------------------------------------------
+    // # Quotes
+    // # ------------------------------------------------------------------
+    // @abimethod(readonly=True)
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_0 // 1
+    ==
+    assert // invalid number of bytes for arc4.bool
+    txna ApplicationArgs 3
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_dart_swap.py:125-128
+    // # ------------------------------------------------------------------
+    // # Quotes
+    // # ------------------------------------------------------------------
+    // @abimethod(readonly=True)
+    callsub get_quote_exact_in
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_fund_pool_asset_route@9:
+    // cresca_dart_swap.py:110
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txn GroupIndex
+    intc_0 // 1
+    -
+    dup
+    gtxns TypeEnum
+    pushint 4 // axfer
+    ==
+    assert // transaction type is axfer
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_dart_swap.py:110
+    // @abimethod
+    callsub fund_pool_asset
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_fund_pool_algo_route@8:
+    // cresca_dart_swap.py:97-100
+    // # ------------------------------------------------------------------
+    // # Pool funding
+    // # ------------------------------------------------------------------
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txn GroupIndex
+    intc_0 // 1
+    -
+    dup
+    gtxns TypeEnum
+    intc_0 // pay
+    ==
+    assert // transaction type is pay
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_dart_swap.py:97-100
+    // # ------------------------------------------------------------------
+    // # Pool funding
+    // # ------------------------------------------------------------------
+    // @abimethod
+    callsub fund_pool_algo
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_opt_in_asset_route@7:
+    // cresca_dart_swap.py:86
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_dart_swap.py:86
+    // @abimethod
+    callsub opt_in_asset
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_configure_pool_route@6:
+    // cresca_dart_swap.py:69
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_0 // 1
+    ==
+    assert // invalid number of bytes for arc4.bool
+    // cresca_dart_swap.py:69
+    // @abimethod
+    callsub configure_pool
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_set_fee_bps_route@5:
+    // cresca_dart_swap.py:59-62
+    // # ------------------------------------------------------------------
+    // # Admin
+    // # ------------------------------------------------------------------
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_1 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_dart_swap.py:59-62
+    // # ------------------------------------------------------------------
+    // # Admin
+    // # ------------------------------------------------------------------
+    // @abimethod
+    callsub set_fee_bps
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_bare_routing@17:
+    // cresca_dart_swap.py:51
+    // class CrescaDartSwap(ARC4Contract):
+    txn OnCompletion
+    bnz main_after_if_else@19
+    txn ApplicationID
+    !
+    assert // can only call when creating
+    intc_0 // 1
+    return
+
+
+// cresca_dart_swap.CrescaDartSwap.set_fee_bps(fee_bps: bytes) -> bytes:
+set_fee_bps:
+    // cresca_dart_swap.py:59-63
+    // # ------------------------------------------------------------------
+    // # Admin
+    // # ------------------------------------------------------------------
+    // @abimethod
+    // def set_fee_bps(self, fee_bps: arc4.UInt64) -> arc4.Bool:
+    proto 1 1
+    // cresca_dart_swap.py:64
+    // assert Txn.sender == Global.creator_address, "Only creator"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // Only creator
+    // cresca_dart_swap.py:65
+    // assert fee_bps.native <= UInt64(MAX_FEE_BPS), "Fee too high"
+    frame_dig -1
+    btoi
+    dup
+    pushint 100 // 100
+    <=
+    assert // Fee too high
+    // cresca_dart_swap.py:66
+    // self.fee_bps.value = fee_bps.native
+    bytec 4 // "fee_bps"
+    swap
+    app_global_put
+    // cresca_dart_swap.py:67
+    // return arc4.Bool(True)
+    bytec_1 // 0x80
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.configure_pool(asset_id: bytes, enabled: bytes) -> bytes:
+configure_pool:
+    // cresca_dart_swap.py:69-70
+    // @abimethod
+    // def configure_pool(self, asset_id: arc4.UInt64, enabled: arc4.Bool) -> arc4.Bool:
+    proto 2 1
+    // cresca_dart_swap.py:71
+    // assert Txn.sender == Global.creator_address, "Only creator"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // Only creator
+    // cresca_dart_swap.py:73
+    // if asset_id in self.pools:
+    bytec_2 // 0x706c5f
+    frame_dig -2
+    concat
+    dup
+    box_len
+    bury 1
+    bz configure_pool_else_body@2
+    // cresca_dart_swap.py:74
+    // pool = self.pools[asset_id].copy()
+    dup
+    box_get
+    assert // check self.pools entry exists
+    // cresca_dart_swap.py:75
+    // pool.enabled = enabled
+    frame_dig -1
+    intc_2 // 0
+    getbit
+    intc 4 // 192
+    swap
+    setbit
+    // cresca_dart_swap.py:76
+    // self.pools[asset_id] = pool.copy()
+    box_put
+
+configure_pool_after_if_else@3:
+    // cresca_dart_swap.py:84
+    // return arc4.Bool(True)
+    bytec_1 // 0x80
+    retsub
+
+configure_pool_else_body@2:
+    // cresca_dart_swap.py:78-83
+    // self.pools[asset_id] = Pool(
+    //     asset_id=asset_id,
+    //     algo_reserve=arc4.UInt64(0),
+    //     asset_reserve=arc4.UInt64(0),
+    //     enabled=enabled,
+    // )
+    frame_dig -2
+    // cresca_dart_swap.py:80
+    // algo_reserve=arc4.UInt64(0),
+    bytec 5 // 0x0000000000000000
+    // cresca_dart_swap.py:78-83
+    // self.pools[asset_id] = Pool(
+    //     asset_id=asset_id,
+    //     algo_reserve=arc4.UInt64(0),
+    //     asset_reserve=arc4.UInt64(0),
+    //     enabled=enabled,
+    // )
+    concat
+    // cresca_dart_swap.py:81
+    // asset_reserve=arc4.UInt64(0),
+    bytec 5 // 0x0000000000000000
+    // cresca_dart_swap.py:78-83
+    // self.pools[asset_id] = Pool(
+    //     asset_id=asset_id,
+    //     algo_reserve=arc4.UInt64(0),
+    //     asset_reserve=arc4.UInt64(0),
+    //     enabled=enabled,
+    // )
+    concat
+    frame_dig -1
+    concat
+    box_put
+    b configure_pool_after_if_else@3
+
+
+// cresca_dart_swap.CrescaDartSwap.opt_in_asset(asset_id: bytes) -> bytes:
+opt_in_asset:
+    // cresca_dart_swap.py:86-87
+    // @abimethod
+    // def opt_in_asset(self, asset_id: arc4.UInt64) -> arc4.Bool:
+    proto 1 1
+    // cresca_dart_swap.py:88
+    // assert Txn.sender == Global.creator_address, "Only creator"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // Only creator
+    // cresca_dart_swap.py:89-94
+    // itxn.AssetTransfer(
+    //     xfer_asset=asset_id.native,
+    //     asset_receiver=Global.current_application_address,
+    //     asset_amount=UInt64(0),
+    //     fee=UInt64(0),
+    // ).submit()
+    itxn_begin
+    // cresca_dart_swap.py:90
+    // xfer_asset=asset_id.native,
+    frame_dig -1
+    btoi
+    // cresca_dart_swap.py:91
+    // asset_receiver=Global.current_application_address,
+    global CurrentApplicationAddress
+    // cresca_dart_swap.py:92
+    // asset_amount=UInt64(0),
+    intc_2 // 0
+    itxn_field AssetAmount
+    itxn_field AssetReceiver
+    itxn_field XferAsset
+    // cresca_dart_swap.py:89
+    // itxn.AssetTransfer(
+    pushint 4 // axfer
+    itxn_field TypeEnum
+    // cresca_dart_swap.py:93
+    // fee=UInt64(0),
+    intc_2 // 0
+    itxn_field Fee
+    // cresca_dart_swap.py:89-94
+    // itxn.AssetTransfer(
+    //     xfer_asset=asset_id.native,
+    //     asset_receiver=Global.current_application_address,
+    //     asset_amount=UInt64(0),
+    //     fee=UInt64(0),
+    // ).submit()
+    itxn_submit
+    // cresca_dart_swap.py:95
+    // return arc4.Bool(True)
+    bytec_1 // 0x80
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.fund_pool_algo(payment_txn: uint64, asset_id: bytes) -> bytes:
+fund_pool_algo:
+    // cresca_dart_swap.py:97-101
+    // # ------------------------------------------------------------------
+    // # Pool funding
+    // # ------------------------------------------------------------------
+    // @abimethod
+    // def fund_pool_algo(self, payment_txn: gtxn.PaymentTransaction, asset_id: arc4.UInt64) -> arc4.Bool:
+    proto 2 1
+    // cresca_dart_swap.py:102
+    // assert payment_txn.receiver == Global.current_application_address, "Must fund app"
+    frame_dig -2
+    gtxns Receiver
+    global CurrentApplicationAddress
+    ==
+    assert // Must fund app
+    // cresca_dart_swap.py:103
+    // assert payment_txn.amount > UInt64(0), "Amount must be > 0"
+    frame_dig -2
+    gtxns Amount
+    dup
+    assert // Amount must be > 0
+    // cresca_dart_swap.py:105
+    // pool = self._require_pool(asset_id)
+    frame_dig -1
+    callsub _require_pool
+    // cresca_dart_swap.py:106
+    // pool.algo_reserve = arc4.UInt64(pool.algo_reserve.native + payment_txn.amount)
+    dup
+    intc_1 // 8
+    extract_uint64
+    uncover 2
+    +
+    itob
+    replace2 8
+    // cresca_dart_swap.py:107
+    // self.pools[asset_id] = pool.copy()
+    bytec_2 // 0x706c5f
+    frame_dig -1
+    concat
+    swap
+    box_put
+    // cresca_dart_swap.py:108
+    // return arc4.Bool(True)
+    bytec_1 // 0x80
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.fund_pool_asset(asset_txn: uint64, asset_id: bytes) -> bytes:
+fund_pool_asset:
+    // cresca_dart_swap.py:110-115
+    // @abimethod
+    // def fund_pool_asset(
+    //     self,
+    //     asset_txn: gtxn.AssetTransferTransaction,
+    //     asset_id: arc4.UInt64,
+    // ) -> arc4.Bool:
+    proto 2 1
+    // cresca_dart_swap.py:116
+    // assert asset_txn.asset_receiver == Global.current_application_address, "Must fund app"
+    frame_dig -2
+    gtxns AssetReceiver
+    global CurrentApplicationAddress
+    ==
+    assert // Must fund app
+    // cresca_dart_swap.py:117
+    // assert asset_txn.asset_amount > UInt64(0), "Amount must be > 0"
+    frame_dig -2
+    gtxns AssetAmount
+    dup
+    assert // Amount must be > 0
+    // cresca_dart_swap.py:118
+    // assert asset_txn.xfer_asset.id == asset_id.native, "Wrong asset"
+    frame_dig -2
+    gtxns XferAsset
+    frame_dig -1
+    btoi
+    ==
+    assert // Wrong asset
+    // cresca_dart_swap.py:120
+    // pool = self._require_pool(asset_id)
+    frame_dig -1
+    callsub _require_pool
+    // cresca_dart_swap.py:121
+    // pool.asset_reserve = arc4.UInt64(pool.asset_reserve.native + asset_txn.asset_amount)
+    dup
+    intc_3 // 16
+    extract_uint64
+    uncover 2
+    +
+    itob
+    replace2 16
+    // cresca_dart_swap.py:122
+    // self.pools[asset_id] = pool.copy()
+    bytec_2 // 0x706c5f
+    frame_dig -1
+    concat
+    swap
+    box_put
+    // cresca_dart_swap.py:123
+    // return arc4.Bool(True)
+    bytec_1 // 0x80
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.get_quote_exact_in(asset_id: bytes, is_algo_in: bytes, amount_in: bytes) -> bytes:
+get_quote_exact_in:
+    // cresca_dart_swap.py:125-134
+    // # ------------------------------------------------------------------
+    // # Quotes
+    // # ------------------------------------------------------------------
+    // @abimethod(readonly=True)
+    // def get_quote_exact_in(
+    //     self,
+    //     asset_id: arc4.UInt64,
+    //     is_algo_in: arc4.Bool,
+    //     amount_in: arc4.UInt64,
+    // ) -> arc4.UInt64:
+    proto 3 1
+    // cresca_dart_swap.py:135
+    // pool = self._require_pool(asset_id)
+    frame_dig -3
+    callsub _require_pool
+    dup
+    // cresca_dart_swap.py:136
+    // assert pool.enabled.native, "Pool disabled"
+    intc 4 // 192
+    getbit
+    bytec_3 // 0x00
+    intc_2 // 0
+    uncover 2
+    setbit
+    intc_2 // 0
+    getbit
+    assert // Pool disabled
+    // cresca_dart_swap.py:138
+    // if is_algo_in.native:
+    frame_dig -2
+    intc_2 // 0
+    getbit
+    bz get_quote_exact_in_after_if_else@2
+    // cresca_dart_swap.py:140
+    // amount_in.native,
+    frame_dig -1
+    btoi
+    // cresca_dart_swap.py:141
+    // pool.algo_reserve.native,
+    swap
+    dup
+    intc_1 // 8
+    extract_uint64
+    // cresca_dart_swap.py:142
+    // pool.asset_reserve.native,
+    swap
+    intc_3 // 16
+    extract_uint64
+    // cresca_dart_swap.py:139-143
+    // out = self._quote_exact_in(
+    //     amount_in.native,
+    //     pool.algo_reserve.native,
+    //     pool.asset_reserve.native,
+    // )
+    callsub _quote_exact_in
+    // cresca_dart_swap.py:144
+    // return arc4.UInt64(out)
+    itob
+    retsub
+
+get_quote_exact_in_after_if_else@2:
+    // cresca_dart_swap.py:147
+    // amount_in.native,
+    frame_dig -1
+    btoi
+    // cresca_dart_swap.py:148
+    // pool.asset_reserve.native,
+    swap
+    dup
+    intc_3 // 16
+    extract_uint64
+    // cresca_dart_swap.py:149
+    // pool.algo_reserve.native,
+    swap
+    intc_1 // 8
+    extract_uint64
+    // cresca_dart_swap.py:146-150
+    // out = self._quote_exact_in(
+    //     amount_in.native,
+    //     pool.asset_reserve.native,
+    //     pool.algo_reserve.native,
+    // )
+    callsub _quote_exact_in
+    // cresca_dart_swap.py:151
+    // return arc4.UInt64(out)
+    itob
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.get_best_quote_exact_in(asset_ids: bytes, amount_in: bytes, is_algo_in: bytes) -> bytes:
+get_best_quote_exact_in:
+    // cresca_dart_swap.py:153-159
+    // @abimethod(readonly=True)
+    // def get_best_quote_exact_in(
+    //     self,
+    //     asset_ids: arc4.DynamicArray[arc4.UInt64],
+    //     amount_in: arc4.UInt64,
+    //     is_algo_in: arc4.Bool,
+    // ) -> BestQuote:
+    proto 3 1
+    intc_2 // 0
+    dupn 2
+    pushbytes ""
+    dup
+    // cresca_dart_swap.py:164
+    // assert asset_ids.length > UInt64(0), "No candidates"
+    frame_dig -3
+    intc_2 // 0
+    extract_uint16
+    dup
+    assert // No candidates
+    // cresca_dart_swap.py:166
+    // best_asset = UInt64(0)
+    intc_2 // 0
+    // cresca_dart_swap.py:167
+    // best_out = UInt64(0)
+    dupn 2
+
+get_best_quote_exact_in_for_header@1:
+    // cresca_dart_swap.py:169
+    // for i in urange(asset_ids.length):
+    frame_dig 8
+    frame_dig 5
+    <
+    bz get_best_quote_exact_in_after_for@13
+    // cresca_dart_swap.py:170
+    // asset_id = asset_ids[i]
+    frame_dig -3
+    extract 2 0
+    dup
+    frame_bury 0
+    frame_dig 8
+    intc_1 // 8
+    *
+    dup
+    frame_bury 3
+    intc_1 // 8
+    extract3 // on error: Index access is out of bounds
+    // cresca_dart_swap.py:171
+    // if asset_id not in self.pools:
+    bytec_2 // 0x706c5f
+    swap
+    concat
+    dup
+    frame_bury 1
+    box_len
+    bury 1
+    bz get_best_quote_exact_in_for_footer@12
+    // cresca_dart_swap.py:173
+    // pool = self.pools[asset_id].copy()
+    frame_dig 1
+    box_get
+    swap
+    dup
+    cover 2
+    frame_bury 2
+    assert // check self.pools entry exists
+    // cresca_dart_swap.py:174
+    // if not pool.enabled.native:
+    intc 4 // 192
+    getbit
+    bytec_3 // 0x00
+    intc_2 // 0
+    uncover 2
+    setbit
+    intc_2 // 0
+    getbit
+    bz get_best_quote_exact_in_for_footer@12
+    // cresca_dart_swap.py:177
+    // if is_algo_in.native:
+    frame_dig -1
+    intc_2 // 0
+    getbit
+    bz get_best_quote_exact_in_else_body@8
+    // cresca_dart_swap.py:179
+    // amount_in.native,
+    frame_dig -2
+    btoi
+    // cresca_dart_swap.py:180
+    // pool.algo_reserve.native,
+    frame_dig 2
+    dup
+    intc_1 // 8
+    extract_uint64
+    // cresca_dart_swap.py:181
+    // pool.asset_reserve.native,
+    swap
+    intc_3 // 16
+    extract_uint64
+    // cresca_dart_swap.py:178-182
+    // out = self._quote_exact_in(
+    //     amount_in.native,
+    //     pool.algo_reserve.native,
+    //     pool.asset_reserve.native,
+    // )
+    callsub _quote_exact_in
+    frame_bury 4
+
+get_best_quote_exact_in_after_if_else@9:
+    // cresca_dart_swap.py:190
+    // if out > best_out:
+    frame_dig 4
+    frame_dig 7
+    >
+    bz get_best_quote_exact_in_for_footer@12
+    // cresca_dart_swap.py:192
+    // best_asset = asset_id.native
+    frame_dig 0
+    frame_dig 3
+    extract_uint64
+    frame_bury 6
+    frame_dig 4
+    frame_bury 7
+
+get_best_quote_exact_in_for_footer@12:
+    // cresca_dart_swap.py:169
+    // for i in urange(asset_ids.length):
+    frame_dig 8
+    intc_0 // 1
+    +
+    frame_bury 8
+    b get_best_quote_exact_in_for_header@1
+
+get_best_quote_exact_in_else_body@8:
+    // cresca_dart_swap.py:185
+    // amount_in.native,
+    frame_dig -2
+    btoi
+    // cresca_dart_swap.py:186
+    // pool.asset_reserve.native,
+    frame_dig 2
+    dup
+    intc_3 // 16
+    extract_uint64
+    // cresca_dart_swap.py:187
+    // pool.algo_reserve.native,
+    swap
+    intc_1 // 8
+    extract_uint64
+    // cresca_dart_swap.py:184-188
+    // out = self._quote_exact_in(
+    //     amount_in.native,
+    //     pool.asset_reserve.native,
+    //     pool.algo_reserve.native,
+    // )
+    callsub _quote_exact_in
+    frame_bury 4
+    b get_best_quote_exact_in_after_if_else@9
+
+get_best_quote_exact_in_after_for@13:
+    // cresca_dart_swap.py:194
+    // return BestQuote(asset_id=arc4.UInt64(best_asset), amount_out=arc4.UInt64(best_out))
+    frame_dig 6
+    itob
+    frame_dig 7
+    itob
+    concat
+    frame_bury 0
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.swap_exact_algo_for_asset(payment_txn: uint64, asset_id: bytes, min_asset_out: bytes, recipient: bytes) -> bytes:
+swap_exact_algo_for_asset:
+    // cresca_dart_swap.py:196-206
+    // # ------------------------------------------------------------------
+    // # Swaps
+    // # ------------------------------------------------------------------
+    // @abimethod
+    // def swap_exact_algo_for_asset(
+    //     self,
+    //     payment_txn: gtxn.PaymentTransaction,
+    //     asset_id: arc4.UInt64,
+    //     min_asset_out: arc4.UInt64,
+    //     recipient: arc4.Address,
+    // ) -> arc4.UInt64:
+    proto 4 1
+    // cresca_dart_swap.py:207
+    // assert payment_txn.receiver == Global.current_application_address, "Must pay app"
+    frame_dig -4
+    gtxns Receiver
+    global CurrentApplicationAddress
+    ==
+    assert // Must pay app
+    // cresca_dart_swap.py:208
+    // assert payment_txn.amount > UInt64(0), "Amount must be > 0"
+    frame_dig -4
+    gtxns Amount
+    dup
+    assert // Amount must be > 0
+    // cresca_dart_swap.py:210
+    // pool = self._require_pool(asset_id)
+    frame_dig -3
+    callsub _require_pool
+    // cresca_dart_swap.py:211
+    // assert pool.enabled.native, "Pool disabled"
+    dup
+    intc 4 // 192
+    getbit
+    bytec_3 // 0x00
+    intc_2 // 0
+    uncover 2
+    setbit
+    intc_2 // 0
+    getbit
+    assert // Pool disabled
+    // cresca_dart_swap.py:215
+    // pool.algo_reserve.native,
+    dup
+    intc_1 // 8
+    extract_uint64
+    // cresca_dart_swap.py:216
+    // pool.asset_reserve.native,
+    dig 1
+    intc_3 // 16
+    extract_uint64
+    // cresca_dart_swap.py:213-217
+    // amount_out = self._quote_exact_in(
+    //     payment_txn.amount,
+    //     pool.algo_reserve.native,
+    //     pool.asset_reserve.native,
+    // )
+    dig 3
+    dig 2
+    dig 2
+    callsub _quote_exact_in
+    // cresca_dart_swap.py:218
+    // assert amount_out >= min_asset_out.native, "Slippage exceeded"
+    frame_dig -2
+    btoi
+    dig 1
+    <=
+    assert // Slippage exceeded
+    // cresca_dart_swap.py:219
+    // assert amount_out > UInt64(0), "No output"
+    dup
+    assert // No output
+    // cresca_dart_swap.py:220
+    // assert pool.asset_reserve.native >= amount_out, "Insufficient pool liquidity"
+    swap
+    dig 1
+    >=
+    assert // Insufficient pool liquidity
+    // cresca_dart_swap.py:222
+    // pool.algo_reserve = arc4.UInt64(pool.algo_reserve.native + payment_txn.amount)
+    swap
+    dig 3
+    +
+    itob
+    uncover 2
+    swap
+    replace2 8
+    // cresca_dart_swap.py:223
+    // pool.asset_reserve = arc4.UInt64(pool.asset_reserve.native - amount_out)
+    dup
+    intc_3 // 16
+    extract_uint64
+    dig 2
+    -
+    itob
+    replace2 16
+    // cresca_dart_swap.py:224
+    // self.pools[asset_id] = pool.copy()
+    bytec_2 // 0x706c5f
+    frame_dig -3
+    concat
+    swap
+    box_put
+    // cresca_dart_swap.py:226-231
+    // itxn.AssetTransfer(
+    //     xfer_asset=asset_id.native,
+    //     asset_receiver=recipient.native,
+    //     asset_amount=amount_out,
+    //     fee=UInt64(0),
+    // ).submit()
+    itxn_begin
+    // cresca_dart_swap.py:227
+    // xfer_asset=asset_id.native,
+    frame_dig -3
+    btoi
+    dig 1
+    itxn_field AssetAmount
+    frame_dig -1
+    itxn_field AssetReceiver
+    itxn_field XferAsset
+    // cresca_dart_swap.py:226
+    // itxn.AssetTransfer(
+    pushint 4 // axfer
+    itxn_field TypeEnum
+    // cresca_dart_swap.py:230
+    // fee=UInt64(0),
+    intc_2 // 0
+    itxn_field Fee
+    // cresca_dart_swap.py:226-231
+    // itxn.AssetTransfer(
+    //     xfer_asset=asset_id.native,
+    //     asset_receiver=recipient.native,
+    //     asset_amount=amount_out,
+    //     fee=UInt64(0),
+    // ).submit()
+    itxn_submit
+    // cresca_dart_swap.py:235
+    // arc4.Address(Txn.sender),
+    txn Sender
+    // cresca_dart_swap.py:238
+    // arc4.UInt64(payment_txn.amount),
+    uncover 2
+    itob
+    // cresca_dart_swap.py:239
+    // arc4.UInt64(amount_out),
+    uncover 2
+    itob
+    // cresca_dart_swap.py:233-240
+    // arc4.emit(
+    //     "SwapExecuted(address,uint64,bool,uint64,uint64)",
+    //     arc4.Address(Txn.sender),
+    //     asset_id,
+    //     arc4.Bool(True),
+    //     arc4.UInt64(payment_txn.amount),
+    //     arc4.UInt64(amount_out),
+    // )
+    uncover 2
+    frame_dig -3
+    concat
+    // cresca_dart_swap.py:237
+    // arc4.Bool(True),
+    bytec_1 // 0x80
+    // cresca_dart_swap.py:233-240
+    // arc4.emit(
+    //     "SwapExecuted(address,uint64,bool,uint64,uint64)",
+    //     arc4.Address(Txn.sender),
+    //     asset_id,
+    //     arc4.Bool(True),
+    //     arc4.UInt64(payment_txn.amount),
+    //     arc4.UInt64(amount_out),
+    // )
+    concat
+    uncover 2
+    concat
+    dig 1
+    concat
+    bytec 6 // method "SwapExecuted(address,uint64,bool,uint64,uint64)"
+    swap
+    concat
+    log
+    // cresca_dart_swap.py:242
+    // return arc4.UInt64(amount_out)
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.swap_exact_asset_for_algo(asset_txn: uint64, asset_id: bytes, min_algo_out: bytes, recipient: bytes) -> bytes:
+swap_exact_asset_for_algo:
+    // cresca_dart_swap.py:244-251
+    // @abimethod
+    // def swap_exact_asset_for_algo(
+    //     self,
+    //     asset_txn: gtxn.AssetTransferTransaction,
+    //     asset_id: arc4.UInt64,
+    //     min_algo_out: arc4.UInt64,
+    //     recipient: arc4.Address,
+    // ) -> arc4.UInt64:
+    proto 4 1
+    // cresca_dart_swap.py:252
+    // assert asset_txn.asset_receiver == Global.current_application_address, "Must pay app"
+    frame_dig -4
+    gtxns AssetReceiver
+    global CurrentApplicationAddress
+    ==
+    assert // Must pay app
+    // cresca_dart_swap.py:253
+    // assert asset_txn.asset_amount > UInt64(0), "Amount must be > 0"
+    frame_dig -4
+    gtxns AssetAmount
+    dup
+    assert // Amount must be > 0
+    // cresca_dart_swap.py:254
+    // assert asset_txn.xfer_asset.id == asset_id.native, "Wrong asset"
+    frame_dig -4
+    gtxns XferAsset
+    frame_dig -3
+    btoi
+    ==
+    assert // Wrong asset
+    // cresca_dart_swap.py:256
+    // pool = self._require_pool(asset_id)
+    frame_dig -3
+    callsub _require_pool
+    // cresca_dart_swap.py:257
+    // assert pool.enabled.native, "Pool disabled"
+    dup
+    intc 4 // 192
+    getbit
+    bytec_3 // 0x00
+    intc_2 // 0
+    uncover 2
+    setbit
+    intc_2 // 0
+    getbit
+    assert // Pool disabled
+    // cresca_dart_swap.py:261
+    // pool.asset_reserve.native,
+    dup
+    intc_3 // 16
+    extract_uint64
+    // cresca_dart_swap.py:262
+    // pool.algo_reserve.native,
+    dig 1
+    intc_1 // 8
+    extract_uint64
+    // cresca_dart_swap.py:259-263
+    // amount_out = self._quote_exact_in(
+    //     asset_txn.asset_amount,
+    //     pool.asset_reserve.native,
+    //     pool.algo_reserve.native,
+    // )
+    dig 3
+    dig 2
+    dig 2
+    callsub _quote_exact_in
+    // cresca_dart_swap.py:264
+    // assert amount_out >= min_algo_out.native, "Slippage exceeded"
+    frame_dig -2
+    btoi
+    dig 1
+    <=
+    assert // Slippage exceeded
+    // cresca_dart_swap.py:265
+    // assert amount_out > UInt64(0), "No output"
+    dup
+    assert // No output
+    // cresca_dart_swap.py:266
+    // assert pool.algo_reserve.native >= amount_out, "Insufficient pool liquidity"
+    swap
+    dig 1
+    >=
+    assert // Insufficient pool liquidity
+    // cresca_dart_swap.py:268
+    // pool.asset_reserve = arc4.UInt64(pool.asset_reserve.native + asset_txn.asset_amount)
+    swap
+    dig 3
+    +
+    itob
+    uncover 2
+    swap
+    replace2 16
+    // cresca_dart_swap.py:269
+    // pool.algo_reserve = arc4.UInt64(pool.algo_reserve.native - amount_out)
+    dup
+    intc_1 // 8
+    extract_uint64
+    dig 2
+    -
+    itob
+    replace2 8
+    // cresca_dart_swap.py:270
+    // self.pools[asset_id] = pool.copy()
+    bytec_2 // 0x706c5f
+    frame_dig -3
+    concat
+    swap
+    box_put
+    // cresca_dart_swap.py:272-276
+    // itxn.Payment(
+    //     receiver=recipient.native,
+    //     amount=amount_out,
+    //     fee=UInt64(0),
+    // ).submit()
+    itxn_begin
+    dup
+    itxn_field Amount
+    frame_dig -1
+    itxn_field Receiver
+    // cresca_dart_swap.py:272
+    // itxn.Payment(
+    intc_0 // pay
+    itxn_field TypeEnum
+    // cresca_dart_swap.py:275
+    // fee=UInt64(0),
+    intc_2 // 0
+    itxn_field Fee
+    // cresca_dart_swap.py:272-276
+    // itxn.Payment(
+    //     receiver=recipient.native,
+    //     amount=amount_out,
+    //     fee=UInt64(0),
+    // ).submit()
+    itxn_submit
+    // cresca_dart_swap.py:280
+    // arc4.Address(Txn.sender),
+    txn Sender
+    // cresca_dart_swap.py:283
+    // arc4.UInt64(asset_txn.asset_amount),
+    uncover 2
+    itob
+    // cresca_dart_swap.py:284
+    // arc4.UInt64(amount_out),
+    uncover 2
+    itob
+    // cresca_dart_swap.py:278-285
+    // arc4.emit(
+    //     "SwapExecuted(address,uint64,bool,uint64,uint64)",
+    //     arc4.Address(Txn.sender),
+    //     asset_id,
+    //     arc4.Bool(False),
+    //     arc4.UInt64(asset_txn.asset_amount),
+    //     arc4.UInt64(amount_out),
+    // )
+    uncover 2
+    frame_dig -3
+    concat
+    // cresca_dart_swap.py:282
+    // arc4.Bool(False),
+    bytec_3 // 0x00
+    // cresca_dart_swap.py:278-285
+    // arc4.emit(
+    //     "SwapExecuted(address,uint64,bool,uint64,uint64)",
+    //     arc4.Address(Txn.sender),
+    //     asset_id,
+    //     arc4.Bool(False),
+    //     arc4.UInt64(asset_txn.asset_amount),
+    //     arc4.UInt64(amount_out),
+    // )
+    concat
+    uncover 2
+    concat
+    dig 1
+    concat
+    bytec 6 // method "SwapExecuted(address,uint64,bool,uint64,uint64)"
+    swap
+    concat
+    log
+    // cresca_dart_swap.py:287
+    // return arc4.UInt64(amount_out)
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.get_pool(asset_id: bytes) -> bytes:
+get_pool:
+    // cresca_dart_swap.py:289-293
+    // # ------------------------------------------------------------------
+    // # Views
+    // # ------------------------------------------------------------------
+    // @abimethod(readonly=True)
+    // def get_pool(self, asset_id: arc4.UInt64) -> Pool:
+    proto 1 1
+    // cresca_dart_swap.py:294
+    // return self._require_pool(asset_id)
+    frame_dig -1
+    callsub _require_pool
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.get_fee_bps() -> bytes:
+get_fee_bps:
+    // cresca_dart_swap.py:298
+    // return arc4.UInt64(self.fee_bps.value)
+    intc_2 // 0
+    bytec 4 // "fee_bps"
+    app_global_get_ex
+    assert // check self.fee_bps exists
+    itob
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap.fund_contract(payment_txn: uint64) -> bytes:
+fund_contract:
+    // cresca_dart_swap.py:300-301
+    // @abimethod
+    // def fund_contract(self, payment_txn: gtxn.PaymentTransaction) -> arc4.Bool:
+    proto 1 1
+    // cresca_dart_swap.py:302
+    // assert payment_txn.receiver == Global.current_application_address, "Must fund app"
+    frame_dig -1
+    gtxns Receiver
+    global CurrentApplicationAddress
+    ==
+    assert // Must fund app
+    // cresca_dart_swap.py:303
+    // assert payment_txn.amount > UInt64(0), "Amount must be > 0"
+    frame_dig -1
+    gtxns Amount
+    assert // Amount must be > 0
+    // cresca_dart_swap.py:304
+    // return arc4.Bool(True)
+    bytec_1 // 0x80
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap._require_pool(asset_id: bytes) -> bytes:
+_require_pool:
+    // cresca_dart_swap.py:306-310
+    // # ------------------------------------------------------------------
+    // # Helpers
+    // # ------------------------------------------------------------------
+    // @subroutine
+    // def _require_pool(self, asset_id: arc4.UInt64) -> Pool:
+    proto 1 1
+    // cresca_dart_swap.py:311
+    // assert asset_id in self.pools, "Pool not found"
+    bytec_2 // 0x706c5f
+    frame_dig -1
+    concat
+    dup
+    box_len
+    bury 1
+    assert // Pool not found
+    // cresca_dart_swap.py:312
+    // return self.pools[asset_id].copy()
+    box_get
+    assert // check self.pools entry exists
+    retsub
+
+
+// cresca_dart_swap.CrescaDartSwap._quote_exact_in(amount_in: uint64, reserve_in: uint64, reserve_out: uint64) -> uint64:
+_quote_exact_in:
+    // cresca_dart_swap.py:314-320
+    // @subroutine
+    // def _quote_exact_in(
+    //     self,
+    //     amount_in: UInt64,
+    //     reserve_in: UInt64,
+    //     reserve_out: UInt64,
+    // ) -> UInt64:
+    proto 3 1
+    // cresca_dart_swap.py:321
+    // assert reserve_in > UInt64(0), "Empty pool"
+    frame_dig -2
+    assert // Empty pool
+    // cresca_dart_swap.py:322
+    // assert reserve_out > UInt64(0), "Empty pool"
+    frame_dig -1
+    assert // Empty pool
+    // cresca_dart_swap.py:324
+    // fee_multiplier = UInt64(FEE_BPS_DENOM) - self.fee_bps.value
+    intc_2 // 0
+    bytec 4 // "fee_bps"
+    app_global_get_ex
+    assert // check self.fee_bps exists
+    pushint 10000 // 10000
+    swap
+    -
+    // cresca_dart_swap.py:325
+    // amount_in_after_fee = (amount_in * fee_multiplier) // UInt64(FEE_BPS_DENOM)
+    frame_dig -3
+    *
+    pushint 10000 // 10000
+    /
+    // cresca_dart_swap.py:326
+    // numerator = amount_in_after_fee * reserve_out
+    dup
+    frame_dig -1
+    *
+    // cresca_dart_swap.py:327
+    // denominator = reserve_in + amount_in_after_fee
+    frame_dig -2
+    uncover 2
+    +
+    // cresca_dart_swap.py:328
+    // return numerator // denominator
+    /
+    retsub

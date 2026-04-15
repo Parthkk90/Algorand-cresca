@@ -1,0 +1,1634 @@
+#pragma version 10
+#pragma typetrack false
+
+// cresca_calendar_payments.CrescaCalendarPayments.__algopy_entrypoint_with_init() -> uint64:
+main:
+    intcblock 1 0 8 32 832
+    bytecblock 0x151f7c75 0x00 0x0000000000000000 0x7363685f "total_schedules" "total_executed" 0x80 0x636e745f
+    txn ApplicationID
+    bnz main_after_if_else@2
+    // cresca_calendar_payments.py:88
+    // self.total_schedules = GlobalState(UInt64(0))
+    bytec 4 // "total_schedules"
+    intc_1 // 0
+    app_global_put
+    // cresca_calendar_payments.py:89
+    // self.total_executed = GlobalState(UInt64(0))
+    bytec 5 // "total_executed"
+    intc_1 // 0
+    app_global_put
+
+main_after_if_else@2:
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txn NumAppArgs
+    bz main_bare_routing@16
+    pushbytess 0x6278908c 0xa8e8cf70 0x4a95687e 0x976b9bd2 0xd312b565 0x94715140 0x9123cdb2 0x86654ce8 0xd3f7f917 0x974a2234 0x156475a8 // method "create_schedule(pay,address,uint64,uint64,uint64,uint64)uint64", method "create_one_time_payment(pay,address,uint64,uint64)uint64", method "create_recurring_payment(pay,address,uint64,uint64,uint64,uint64)uint64", method "execute_schedule(address,uint64)bool", method "cancel_schedule(uint64)bool", method "is_executable(address,uint64)bool", method "get_next_execution_time(address,uint64)uint64", method "get_total_schedules()uint64", method "get_total_executed()uint64", method "get_user_schedule_count(address)uint64", method "fund_contract(pay)bool"
+    txna ApplicationArgs 0
+    match main_create_schedule_route@5 main_create_one_time_payment_route@6 main_create_recurring_payment_route@7 main_execute_schedule_route@8 main_cancel_schedule_route@9 main_is_executable_route@10 main_get_next_execution_time_route@11 main_get_total_schedules_route@12 main_get_total_executed_route@13 main_get_user_schedule_count_route@14 main_fund_contract_route@15
+
+main_after_if_else@18:
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    intc_1 // 0
+    return
+
+main_fund_contract_route@15:
+    // cresca_calendar_payments.py:392-395
+    // # ------------------------------------------------------------------
+    // # fund_contract
+    // # ------------------------------------------------------------------
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txn GroupIndex
+    intc_0 // 1
+    -
+    dup
+    gtxns TypeEnum
+    intc_0 // pay
+    ==
+    assert // transaction type is pay
+    // cresca_calendar_payments.py:392-395
+    // # ------------------------------------------------------------------
+    // # fund_contract
+    // # ------------------------------------------------------------------
+    // @abimethod
+    callsub fund_contract
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_get_user_schedule_count_route@14:
+    // cresca_calendar_payments.py:386
+    // @abimethod(readonly=True)
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_3 // 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    // cresca_calendar_payments.py:386
+    // @abimethod(readonly=True)
+    callsub get_user_schedule_count
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_get_total_executed_route@13:
+    // cresca_calendar_payments.py:382
+    // @abimethod(readonly=True)
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    callsub get_total_executed
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_get_total_schedules_route@12:
+    // cresca_calendar_payments.py:378
+    // @abimethod(readonly=True)
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    callsub get_total_schedules
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_get_next_execution_time_route@11:
+    // cresca_calendar_payments.py:362
+    // @abimethod(readonly=True)
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_3 // 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_calendar_payments.py:362
+    // @abimethod(readonly=True)
+    callsub get_next_execution_time
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_is_executable_route@10:
+    // cresca_calendar_payments.py:343-346
+    // # ------------------------------------------------------------------
+    // # Read-only views
+    // # ------------------------------------------------------------------
+    // @abimethod(readonly=True)
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_3 // 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_calendar_payments.py:343-346
+    // # ------------------------------------------------------------------
+    // # Read-only views
+    // # ------------------------------------------------------------------
+    // @abimethod(readonly=True)
+    callsub is_executable
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_cancel_schedule_route@9:
+    // cresca_calendar_payments.py:292-295
+    // # ------------------------------------------------------------------
+    // # cancel_schedule
+    // # ------------------------------------------------------------------
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_calendar_payments.py:292-295
+    // # ------------------------------------------------------------------
+    // # cancel_schedule
+    // # ------------------------------------------------------------------
+    // @abimethod
+    callsub cancel_schedule
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_execute_schedule_route@8:
+    // cresca_calendar_payments.py:216-219
+    // # ------------------------------------------------------------------
+    // # execute_schedule
+    // # ------------------------------------------------------------------
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_3 // 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_calendar_payments.py:216-219
+    // # ------------------------------------------------------------------
+    // # execute_schedule
+    // # ------------------------------------------------------------------
+    // @abimethod
+    callsub execute_schedule
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_create_recurring_payment_route@7:
+    // cresca_calendar_payments.py:192-195
+    // # ------------------------------------------------------------------
+    // # create_recurring_payment  (convenience wrapper)
+    // # ------------------------------------------------------------------
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txn GroupIndex
+    intc_0 // 1
+    -
+    dup
+    gtxns TypeEnum
+    intc_0 // pay
+    ==
+    assert // transaction type is pay
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_3 // 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 3
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 4
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 5
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_calendar_payments.py:192-195
+    // # ------------------------------------------------------------------
+    // # create_recurring_payment  (convenience wrapper)
+    // # ------------------------------------------------------------------
+    // @abimethod
+    callsub create_recurring_payment
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_create_one_time_payment_route@6:
+    // cresca_calendar_payments.py:171-174
+    // # ------------------------------------------------------------------
+    // # create_one_time_payment  (convenience wrapper)
+    // # ------------------------------------------------------------------
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txn GroupIndex
+    intc_0 // 1
+    -
+    dup
+    gtxns TypeEnum
+    intc_0 // pay
+    ==
+    assert // transaction type is pay
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_3 // 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 3
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_calendar_payments.py:171-174
+    // # ------------------------------------------------------------------
+    // # create_one_time_payment  (convenience wrapper)
+    // # ------------------------------------------------------------------
+    // @abimethod
+    callsub create_one_time_payment
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_create_schedule_route@5:
+    // cresca_calendar_payments.py:93-96
+    // # ------------------------------------------------------------------
+    // # create_schedule
+    // # ------------------------------------------------------------------
+    // @abimethod
+    txn OnCompletion
+    !
+    assert // OnCompletion is not NoOp
+    txn ApplicationID
+    assert // can only call when not creating
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txn GroupIndex
+    intc_0 // 1
+    -
+    dup
+    gtxns TypeEnum
+    intc_0 // pay
+    ==
+    assert // transaction type is pay
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_3 // 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 3
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 4
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    txna ApplicationArgs 5
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    // cresca_calendar_payments.py:93-96
+    // # ------------------------------------------------------------------
+    // # create_schedule
+    // # ------------------------------------------------------------------
+    // @abimethod
+    callsub create_schedule
+    bytec_0 // 0x151f7c75
+    swap
+    concat
+    log
+    intc_0 // 1
+    return
+
+main_bare_routing@16:
+    // cresca_calendar_payments.py:69
+    // class CrescaCalendarPayments(ARC4Contract):
+    txn OnCompletion
+    bnz main_after_if_else@18
+    txn ApplicationID
+    !
+    assert // can only call when creating
+    intc_0 // 1
+    return
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.create_schedule(payment_txn: uint64, recipient: bytes, amount: bytes, execute_at: bytes, interval_seconds: bytes, occurrences: bytes) -> bytes:
+create_schedule:
+    // cresca_calendar_payments.py:93-105
+    // # ------------------------------------------------------------------
+    // # create_schedule
+    // # ------------------------------------------------------------------
+    // @abimethod
+    // def create_schedule(
+    //     self,
+    //     payment_txn: gtxn.PaymentTransaction,
+    //     recipient: arc4.Address,
+    //     amount: arc4.UInt64,
+    //     execute_at: arc4.UInt64,
+    //     interval_seconds: arc4.UInt64,
+    //     occurrences: arc4.UInt64,
+    // ) -> arc4.UInt64:
+    proto 6 1
+    intc_1 // 0
+    pushbytes ""
+    // cresca_calendar_payments.py:115
+    // assert amount.native > UInt64(0), "Amount must be > 0"
+    frame_dig -4
+    btoi
+    dup
+    assert // Amount must be > 0
+    // cresca_calendar_payments.py:116
+    // assert execute_at.native > Global.latest_timestamp, "execute_at must be in future"
+    frame_dig -3
+    btoi
+    global LatestTimestamp
+    >
+    assert // execute_at must be in future
+    // cresca_calendar_payments.py:117
+    // assert occurrences.native > UInt64(0), "occurrences must be > 0"
+    frame_dig -1
+    btoi
+    dup
+    assert // occurrences must be > 0
+    // cresca_calendar_payments.py:118
+    // assert payment_txn.receiver == Global.current_application_address, "Payment must target contract"
+    frame_dig -6
+    gtxns Receiver
+    global CurrentApplicationAddress
+    ==
+    assert // Payment must target contract
+    // cresca_calendar_payments.py:120
+    // total_required: UInt64 = amount.native * occurrences.native
+    *
+    dup
+    // cresca_calendar_payments.py:121
+    // assert payment_txn.amount >= total_required, "Insufficient escrow funds"
+    frame_dig -6
+    gtxns Amount
+    dup
+    uncover 2
+    >=
+    assert // Insufficient escrow funds
+    // cresca_calendar_payments.py:123-124
+    // # Determine schedule_id
+    // payer_addr = arc4.Address(Txn.sender)
+    txn Sender
+    // cresca_calendar_payments.py:125
+    // if payer_addr in self.schedule_counts:
+    bytec 7 // 0x636e745f
+    // cresca_calendar_payments.py:123-124
+    // # Determine schedule_id
+    // payer_addr = arc4.Address(Txn.sender)
+    txn Sender
+    // cresca_calendar_payments.py:125
+    // if payer_addr in self.schedule_counts:
+    concat
+    dup
+    box_len
+    bury 1
+    bz create_schedule_else_body@2
+    // cresca_calendar_payments.py:126
+    // schedule_id = self.schedule_counts[payer_addr].native
+    frame_dig 5
+    box_get
+    assert // check self.schedule_counts entry exists
+    btoi
+
+create_schedule_after_if_else@3:
+    // cresca_calendar_payments.py:130-131
+    // # Store schedule in a Box
+    // schedule_key = _schedule_key(Txn.sender.bytes, schedule_id)
+    txn Sender
+    // cresca_calendar_payments.py:62
+    // return payer + op.itob(schedule_id)
+    dig 1
+    itob
+    dup
+    frame_bury 0
+    concat
+    // cresca_calendar_payments.py:141
+    // escrow_balance=arc4.UInt64(total_required),
+    frame_dig 2
+    dup
+    cover 3
+    itob
+    // cresca_calendar_payments.py:142
+    // created_at=arc4.UInt64(Global.latest_timestamp),
+    global LatestTimestamp
+    itob
+    // cresca_calendar_payments.py:132-143
+    // self.schedules[schedule_key] = Schedule(
+    //     payer=payer_addr,
+    //     recipient=recipient,
+    //     amount=amount,
+    //     execute_at=execute_at,
+    //     interval_seconds=interval_seconds,
+    //     occurrences=occurrences,
+    //     executed_count=arc4.UInt64(0),
+    //     active=arc4.Bool(True),
+    //     escrow_balance=arc4.UInt64(total_required),
+    //     created_at=arc4.UInt64(Global.latest_timestamp),
+    // )
+    frame_dig 4
+    frame_dig -5
+    concat
+    frame_dig -4
+    concat
+    frame_dig -3
+    concat
+    frame_dig -2
+    concat
+    frame_dig -1
+    concat
+    // cresca_calendar_payments.py:139
+    // executed_count=arc4.UInt64(0),
+    bytec_2 // 0x0000000000000000
+    // cresca_calendar_payments.py:132-143
+    // self.schedules[schedule_key] = Schedule(
+    //     payer=payer_addr,
+    //     recipient=recipient,
+    //     amount=amount,
+    //     execute_at=execute_at,
+    //     interval_seconds=interval_seconds,
+    //     occurrences=occurrences,
+    //     executed_count=arc4.UInt64(0),
+    //     active=arc4.Bool(True),
+    //     escrow_balance=arc4.UInt64(total_required),
+    //     created_at=arc4.UInt64(Global.latest_timestamp),
+    // )
+    concat
+    // cresca_calendar_payments.py:140
+    // active=arc4.Bool(True),
+    bytec 6 // 0x80
+    // cresca_calendar_payments.py:132-143
+    // self.schedules[schedule_key] = Schedule(
+    //     payer=payer_addr,
+    //     recipient=recipient,
+    //     amount=amount,
+    //     execute_at=execute_at,
+    //     interval_seconds=interval_seconds,
+    //     occurrences=occurrences,
+    //     executed_count=arc4.UInt64(0),
+    //     active=arc4.Bool(True),
+    //     escrow_balance=arc4.UInt64(total_required),
+    //     created_at=arc4.UInt64(Global.latest_timestamp),
+    // )
+    concat
+    uncover 2
+    concat
+    swap
+    concat
+    // cresca_calendar_payments.py:132
+    // self.schedules[schedule_key] = Schedule(
+    bytec_3 // 0x7363685f
+    uncover 2
+    concat
+    // cresca_calendar_payments.py:132-143
+    // self.schedules[schedule_key] = Schedule(
+    //     payer=payer_addr,
+    //     recipient=recipient,
+    //     amount=amount,
+    //     execute_at=execute_at,
+    //     interval_seconds=interval_seconds,
+    //     occurrences=occurrences,
+    //     executed_count=arc4.UInt64(0),
+    //     active=arc4.Bool(True),
+    //     escrow_balance=arc4.UInt64(total_required),
+    //     created_at=arc4.UInt64(Global.latest_timestamp),
+    // )
+    swap
+    box_put
+    // cresca_calendar_payments.py:145-146
+    // # Increment user's schedule counter
+    // self.schedule_counts[payer_addr] = arc4.UInt64(schedule_id + UInt64(1))
+    intc_0 // 1
+    +
+    itob
+    frame_dig 5
+    swap
+    box_put
+    // cresca_calendar_payments.py:148
+    // self.total_schedules.value = self.total_schedules.value + UInt64(1)
+    intc_1 // 0
+    bytec 4 // "total_schedules"
+    app_global_get_ex
+    assert // check self.total_schedules exists
+    intc_0 // 1
+    +
+    bytec 4 // "total_schedules"
+    swap
+    app_global_put
+    // cresca_calendar_payments.py:150-151
+    // # Refund any excess
+    // excess = payment_txn.amount - total_required
+    frame_dig 3
+    swap
+    -
+    dup
+    frame_bury 1
+    // cresca_calendar_payments.py:152
+    // if excess > UInt64(0):
+    bz create_schedule_after_if_else@6
+    // cresca_calendar_payments.py:153-157
+    // itxn.Payment(
+    //     receiver=Txn.sender,
+    //     amount=excess,
+    //     fee=0,
+    // ).submit()
+    itxn_begin
+    // cresca_calendar_payments.py:154
+    // receiver=Txn.sender,
+    txn Sender
+    frame_dig 1
+    itxn_field Amount
+    itxn_field Receiver
+    // cresca_calendar_payments.py:153
+    // itxn.Payment(
+    intc_0 // pay
+    itxn_field TypeEnum
+    // cresca_calendar_payments.py:156
+    // fee=0,
+    intc_1 // 0
+    itxn_field Fee
+    // cresca_calendar_payments.py:153-157
+    // itxn.Payment(
+    //     receiver=Txn.sender,
+    //     amount=excess,
+    //     fee=0,
+    // ).submit()
+    itxn_submit
+
+create_schedule_after_if_else@6:
+    // cresca_calendar_payments.py:166
+    // arc4.Bool(interval_seconds.native > UInt64(0)),
+    frame_dig -2
+    btoi
+    bytec_1 // 0x00
+    intc_1 // 0
+    uncover 2
+    setbit
+    // cresca_calendar_payments.py:159-167
+    // arc4.emit(
+    //     "ScheduleCreated(address,uint64,address,uint64,uint64,bool)",
+    //     payer_addr,
+    //     arc4.UInt64(schedule_id),
+    //     recipient,
+    //     amount,
+    //     execute_at,
+    //     arc4.Bool(interval_seconds.native > UInt64(0)),
+    // )
+    frame_dig 4
+    frame_dig 0
+    dup
+    cover 3
+    concat
+    frame_dig -5
+    concat
+    frame_dig -4
+    concat
+    frame_dig -3
+    concat
+    swap
+    concat
+    pushbytes 0xa0a25892 // method "ScheduleCreated(address,uint64,address,uint64,uint64,bool)"
+    swap
+    concat
+    log
+    // cresca_calendar_payments.py:169
+    // return arc4.UInt64(schedule_id)
+    frame_bury 0
+    retsub
+
+create_schedule_else_body@2:
+    // cresca_calendar_payments.py:128
+    // schedule_id = UInt64(0)
+    intc_1 // 0
+    b create_schedule_after_if_else@3
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.create_one_time_payment(payment_txn: uint64, recipient: bytes, amount: bytes, execute_at: bytes) -> bytes:
+create_one_time_payment:
+    // cresca_calendar_payments.py:171-181
+    // # ------------------------------------------------------------------
+    // # create_one_time_payment  (convenience wrapper)
+    // # ------------------------------------------------------------------
+    // @abimethod
+    // def create_one_time_payment(
+    //     self,
+    //     payment_txn: gtxn.PaymentTransaction,
+    //     recipient: arc4.Address,
+    //     amount: arc4.UInt64,
+    //     execute_at: arc4.UInt64,
+    // ) -> arc4.UInt64:
+    proto 4 1
+    // cresca_calendar_payments.py:183-190
+    // return self.create_schedule(
+    //     payment_txn,
+    //     recipient,
+    //     amount,
+    //     execute_at,
+    //     arc4.UInt64(0),   # interval = 0 → one-time
+    //     arc4.UInt64(1),   # occurrences = 1
+    // )
+    frame_dig -4
+    frame_dig -3
+    frame_dig -2
+    frame_dig -1
+    // cresca_calendar_payments.py:188
+    // arc4.UInt64(0),   # interval = 0 → one-time
+    bytec_2 // 0x0000000000000000
+    // cresca_calendar_payments.py:189
+    // arc4.UInt64(1),   # occurrences = 1
+    pushbytes 0x0000000000000001
+    // cresca_calendar_payments.py:183-190
+    // return self.create_schedule(
+    //     payment_txn,
+    //     recipient,
+    //     amount,
+    //     execute_at,
+    //     arc4.UInt64(0),   # interval = 0 → one-time
+    //     arc4.UInt64(1),   # occurrences = 1
+    // )
+    callsub create_schedule
+    retsub
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.create_recurring_payment(payment_txn: uint64, recipient: bytes, amount: bytes, first_execution_at: bytes, interval_days: bytes, occurrences: bytes) -> bytes:
+create_recurring_payment:
+    // cresca_calendar_payments.py:192-204
+    // # ------------------------------------------------------------------
+    // # create_recurring_payment  (convenience wrapper)
+    // # ------------------------------------------------------------------
+    // @abimethod
+    // def create_recurring_payment(
+    //     self,
+    //     payment_txn: gtxn.PaymentTransaction,
+    //     recipient: arc4.Address,
+    //     amount: arc4.UInt64,
+    //     first_execution_at: arc4.UInt64,
+    //     interval_days: arc4.UInt64,
+    //     occurrences: arc4.UInt64,
+    // ) -> arc4.UInt64:
+    proto 6 1
+    // cresca_calendar_payments.py:206
+    // interval_seconds = arc4.UInt64(interval_days.native * UInt64(86400))
+    frame_dig -2
+    btoi
+    pushint 86400 // 86400
+    *
+    itob
+    // cresca_calendar_payments.py:207-214
+    // return self.create_schedule(
+    //     payment_txn,
+    //     recipient,
+    //     amount,
+    //     first_execution_at,
+    //     interval_seconds,
+    //     occurrences,
+    // )
+    frame_dig -6
+    frame_dig -5
+    frame_dig -4
+    frame_dig -3
+    uncover 4
+    frame_dig -1
+    callsub create_schedule
+    retsub
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.execute_schedule(payer: bytes, schedule_id: bytes) -> bytes:
+execute_schedule:
+    // cresca_calendar_payments.py:216-224
+    // # ------------------------------------------------------------------
+    // # execute_schedule
+    // # ------------------------------------------------------------------
+    // @abimethod
+    // def execute_schedule(
+    //     self,
+    //     payer: arc4.Address,
+    //     schedule_id: arc4.UInt64,
+    // ) -> arc4.Bool:
+    proto 2 1
+    // cresca_calendar_payments.py:233
+    // schedule_key = _schedule_key(payer.native.bytes, schedule_id.native)
+    frame_dig -1
+    btoi
+    // cresca_calendar_payments.py:62
+    // return payer + op.itob(schedule_id)
+    itob
+    frame_dig -2
+    swap
+    concat
+    // cresca_calendar_payments.py:234
+    // assert schedule_key in self.schedules, "Schedule not found"
+    bytec_3 // 0x7363685f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    assert // Schedule not found
+    // cresca_calendar_payments.py:236
+    // schedule = self.schedules[schedule_key].copy()
+    dup
+    box_get
+    assert // check self.schedules entry exists
+    // cresca_calendar_payments.py:238
+    // assert schedule.active.native, "Schedule already completed/cancelled"
+    dup
+    intc 4 // 832
+    getbit
+    bytec_1 // 0x00
+    intc_1 // 0
+    uncover 2
+    setbit
+    intc_1 // 0
+    getbit
+    assert // Schedule already completed/cancelled
+    // cresca_calendar_payments.py:239
+    // assert schedule.executed_count.native < schedule.occurrences.native, "All payments done"
+    dup
+    pushint 96 // 96
+    extract_uint64
+    dig 1
+    extract 88 8 // on error: Index access is out of bounds
+    dig 2
+    pushint 88 // 88
+    extract_uint64
+    dig 2
+    dig 1
+    <
+    assert // All payments done
+    // cresca_calendar_payments.py:241-242
+    // # Calculate next execution time
+    // next_exec = schedule.execute_at.native + (
+    dig 3
+    extract 72 8 // on error: Index access is out of bounds
+    dig 4
+    pushint 72 // 72
+    extract_uint64
+    // cresca_calendar_payments.py:243
+    // schedule.executed_count.native * schedule.interval_seconds.native
+    dig 5
+    extract 80 8 // on error: Index access is out of bounds
+    dig 6
+    pushint 80 // 80
+    extract_uint64
+    dig 6
+    *
+    // cresca_calendar_payments.py:241-244
+    // # Calculate next execution time
+    // next_exec = schedule.execute_at.native + (
+    //     schedule.executed_count.native * schedule.interval_seconds.native
+    // )
+    uncover 2
+    +
+    // cresca_calendar_payments.py:245
+    // assert Global.latest_timestamp >= next_exec, "Not yet executable"
+    global LatestTimestamp
+    <=
+    assert // Not yet executable
+    // cresca_calendar_payments.py:246
+    // assert schedule.escrow_balance.native >= schedule.amount.native, "Insufficient escrow"
+    dig 5
+    pushint 105 // 105
+    extract_uint64
+    dig 6
+    extract 64 8 // on error: Index access is out of bounds
+    dig 7
+    pushint 64 // 64
+    extract_uint64
+    dig 2
+    dig 1
+    >=
+    assert // Insufficient escrow
+    // cresca_calendar_payments.py:248-249
+    // # Deduct from escrow and increment count
+    // new_balance = schedule.escrow_balance.native - schedule.amount.native
+    uncover 2
+    dig 1
+    -
+    // cresca_calendar_payments.py:250
+    // new_count = schedule.executed_count.native + UInt64(1)
+    uncover 7
+    intc_0 // 1
+    +
+    // cresca_calendar_payments.py:251
+    // is_done = new_count >= schedule.occurrences.native
+    dup
+    uncover 7
+    >=
+    // cresca_calendar_payments.py:254
+    // payer=schedule.payer,
+    dig 8
+    extract 0 32 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:255
+    // recipient=schedule.recipient,
+    dig 9
+    extract 32 32 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:260
+    // executed_count=arc4.UInt64(new_count),
+    uncover 3
+    itob
+    // cresca_calendar_payments.py:261
+    // active=arc4.Bool(not is_done),
+    dig 3
+    !
+    bytec_1 // 0x00
+    intc_1 // 0
+    uncover 2
+    setbit
+    // cresca_calendar_payments.py:262
+    // escrow_balance=arc4.UInt64(new_balance),
+    uncover 5
+    itob
+    // cresca_calendar_payments.py:263
+    // created_at=schedule.created_at,
+    uncover 11
+    extract 113 8 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:253-264
+    // self.schedules[schedule_key] = Schedule(
+    //     payer=schedule.payer,
+    //     recipient=schedule.recipient,
+    //     amount=schedule.amount,
+    //     execute_at=schedule.execute_at,
+    //     interval_seconds=schedule.interval_seconds,
+    //     occurrences=schedule.occurrences,
+    //     executed_count=arc4.UInt64(new_count),
+    //     active=arc4.Bool(not is_done),
+    //     escrow_balance=arc4.UInt64(new_balance),
+    //     created_at=schedule.created_at,
+    // )
+    dig 5
+    dig 5
+    concat
+    dig 9
+    concat
+    uncover 11
+    concat
+    uncover 10
+    concat
+    uncover 10
+    concat
+    dig 4
+    concat
+    uncover 3
+    concat
+    uncover 2
+    concat
+    swap
+    concat
+    uncover 7
+    swap
+    box_put
+    // cresca_calendar_payments.py:266-271
+    // # Send payment to recipient
+    // itxn.Payment(
+    //     receiver=schedule.recipient.native,
+    //     amount=schedule.amount.native,
+    //     fee=0,
+    // ).submit()
+    itxn_begin
+    uncover 4
+    itxn_field Amount
+    dig 1
+    itxn_field Receiver
+    // cresca_calendar_payments.py:266-267
+    // # Send payment to recipient
+    // itxn.Payment(
+    intc_0 // pay
+    itxn_field TypeEnum
+    // cresca_calendar_payments.py:270
+    // fee=0,
+    intc_1 // 0
+    itxn_field Fee
+    // cresca_calendar_payments.py:266-271
+    // # Send payment to recipient
+    // itxn.Payment(
+    //     receiver=schedule.recipient.native,
+    //     amount=schedule.amount.native,
+    //     fee=0,
+    // ).submit()
+    itxn_submit
+    // cresca_calendar_payments.py:273-280
+    // arc4.emit(
+    //     "PaymentExecuted(address,uint64,address,uint64,uint64)",
+    //     schedule.payer,
+    //     schedule_id,
+    //     schedule.recipient,
+    //     schedule.amount,
+    //     arc4.UInt64(new_count),
+    // )
+    uncover 2
+    frame_dig -1
+    concat
+    dup
+    cover 5
+    uncover 2
+    concat
+    uncover 3
+    concat
+    swap
+    concat
+    pushbytes 0xbcbf60bf // method "PaymentExecuted(address,uint64,address,uint64,uint64)"
+    swap
+    concat
+    log
+    // cresca_calendar_payments.py:282
+    // if is_done:
+    bz execute_schedule_after_if_else@3
+    // cresca_calendar_payments.py:283
+    // self.total_executed.value = self.total_executed.value + UInt64(1)
+    intc_1 // 0
+    bytec 5 // "total_executed"
+    app_global_get_ex
+    assert // check self.total_executed exists
+    intc_0 // 1
+    +
+    bytec 5 // "total_executed"
+    swap
+    app_global_put
+    // cresca_calendar_payments.py:284-288
+    // arc4.emit(
+    //     "ScheduleCompleted(address,uint64)",
+    //     schedule.payer,
+    //     schedule_id,
+    // )
+    pushbytes 0x66712a07 // method "ScheduleCompleted(address,uint64)"
+    frame_dig 0
+    concat
+    log
+
+execute_schedule_after_if_else@3:
+    // cresca_calendar_payments.py:290
+    // return arc4.Bool(True)
+    bytec 6 // 0x80
+    swap
+    retsub
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.cancel_schedule(schedule_id: bytes) -> bytes:
+cancel_schedule:
+    // cresca_calendar_payments.py:292-296
+    // # ------------------------------------------------------------------
+    // # cancel_schedule
+    // # ------------------------------------------------------------------
+    // @abimethod
+    // def cancel_schedule(self, schedule_id: arc4.UInt64) -> arc4.Bool:
+    proto 1 1
+    // cresca_calendar_payments.py:301
+    // payer_addr = arc4.Address(Txn.sender)
+    txn Sender
+    // cresca_calendar_payments.py:301-302
+    // payer_addr = arc4.Address(Txn.sender)
+    // schedule_key = _schedule_key(Txn.sender.bytes, schedule_id.native)
+    dupn 2
+    // cresca_calendar_payments.py:302
+    // schedule_key = _schedule_key(Txn.sender.bytes, schedule_id.native)
+    frame_dig -1
+    btoi
+    // cresca_calendar_payments.py:62
+    // return payer + op.itob(schedule_id)
+    itob
+    concat
+    // cresca_calendar_payments.py:303
+    // assert schedule_key in self.schedules, "Schedule not found"
+    bytec_3 // 0x7363685f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    assert // Schedule not found
+    // cresca_calendar_payments.py:305
+    // schedule = self.schedules[schedule_key].copy()
+    dup
+    box_get
+    assert // check self.schedules entry exists
+    // cresca_calendar_payments.py:307
+    // assert schedule.payer == payer_addr, "Unauthorized"
+    dup
+    extract 0 32 // on error: Index access is out of bounds
+    dup
+    uncover 4
+    ==
+    assert // Unauthorized
+    // cresca_calendar_payments.py:308
+    // assert schedule.active.native, "Schedule already completed/cancelled"
+    dig 1
+    intc 4 // 832
+    getbit
+    bytec_1 // 0x00
+    intc_1 // 0
+    uncover 2
+    setbit
+    intc_1 // 0
+    getbit
+    assert // Schedule already completed/cancelled
+    // cresca_calendar_payments.py:310
+    // refund_amount = schedule.escrow_balance.native
+    dig 1
+    pushint 105 // 105
+    extract_uint64
+    dup
+    cover 3
+    cover 4
+    // cresca_calendar_payments.py:315
+    // recipient=schedule.recipient,
+    dig 1
+    extract 32 32 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:316
+    // amount=schedule.amount,
+    dig 2
+    extract 64 8 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:317
+    // execute_at=schedule.execute_at,
+    dig 3
+    extract 72 8 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:318
+    // interval_seconds=schedule.interval_seconds,
+    dig 4
+    extract 80 8 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:319
+    // occurrences=schedule.occurrences,
+    dig 5
+    extract 88 8 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:320
+    // executed_count=schedule.executed_count,
+    dig 6
+    extract 96 8 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:323
+    // created_at=schedule.created_at,
+    uncover 7
+    extract 113 8 // on error: Index access is out of bounds
+    // cresca_calendar_payments.py:312-324
+    // # Mark inactive with zero escrow
+    // self.schedules[schedule_key] = Schedule(
+    //     payer=schedule.payer,
+    //     recipient=schedule.recipient,
+    //     amount=schedule.amount,
+    //     execute_at=schedule.execute_at,
+    //     interval_seconds=schedule.interval_seconds,
+    //     occurrences=schedule.occurrences,
+    //     executed_count=schedule.executed_count,
+    //     active=arc4.Bool(False),
+    //     escrow_balance=arc4.UInt64(0),
+    //     created_at=schedule.created_at,
+    // )
+    uncover 7
+    uncover 7
+    concat
+    uncover 6
+    concat
+    uncover 5
+    concat
+    uncover 4
+    concat
+    uncover 3
+    concat
+    uncover 2
+    concat
+    // cresca_calendar_payments.py:321
+    // active=arc4.Bool(False),
+    bytec_1 // 0x00
+    // cresca_calendar_payments.py:312-324
+    // # Mark inactive with zero escrow
+    // self.schedules[schedule_key] = Schedule(
+    //     payer=schedule.payer,
+    //     recipient=schedule.recipient,
+    //     amount=schedule.amount,
+    //     execute_at=schedule.execute_at,
+    //     interval_seconds=schedule.interval_seconds,
+    //     occurrences=schedule.occurrences,
+    //     executed_count=schedule.executed_count,
+    //     active=arc4.Bool(False),
+    //     escrow_balance=arc4.UInt64(0),
+    //     created_at=schedule.created_at,
+    // )
+    concat
+    // cresca_calendar_payments.py:322
+    // escrow_balance=arc4.UInt64(0),
+    bytec_2 // 0x0000000000000000
+    // cresca_calendar_payments.py:312-324
+    // # Mark inactive with zero escrow
+    // self.schedules[schedule_key] = Schedule(
+    //     payer=schedule.payer,
+    //     recipient=schedule.recipient,
+    //     amount=schedule.amount,
+    //     execute_at=schedule.execute_at,
+    //     interval_seconds=schedule.interval_seconds,
+    //     occurrences=schedule.occurrences,
+    //     executed_count=schedule.executed_count,
+    //     active=arc4.Bool(False),
+    //     escrow_balance=arc4.UInt64(0),
+    //     created_at=schedule.created_at,
+    // )
+    concat
+    swap
+    concat
+    uncover 2
+    swap
+    box_put
+    // cresca_calendar_payments.py:326-327
+    // # Refund remaining escrow
+    // if refund_amount > UInt64(0):
+    bz cancel_schedule_after_if_else@3
+    // cresca_calendar_payments.py:328-332
+    // itxn.Payment(
+    //     receiver=Txn.sender,
+    //     amount=refund_amount,
+    //     fee=0,
+    // ).submit()
+    itxn_begin
+    // cresca_calendar_payments.py:329
+    // receiver=Txn.sender,
+    txn Sender
+    frame_dig 1
+    itxn_field Amount
+    itxn_field Receiver
+    // cresca_calendar_payments.py:328
+    // itxn.Payment(
+    intc_0 // pay
+    itxn_field TypeEnum
+    // cresca_calendar_payments.py:331
+    // fee=0,
+    intc_1 // 0
+    itxn_field Fee
+    // cresca_calendar_payments.py:328-332
+    // itxn.Payment(
+    //     receiver=Txn.sender,
+    //     amount=refund_amount,
+    //     fee=0,
+    // ).submit()
+    itxn_submit
+
+cancel_schedule_after_if_else@3:
+    // cresca_calendar_payments.py:338
+    // arc4.UInt64(refund_amount),
+    frame_dig 1
+    itob
+    // cresca_calendar_payments.py:334-339
+    // arc4.emit(
+    //     "ScheduleCancelled(address,uint64,uint64)",
+    //     payer_addr,
+    //     schedule_id,
+    //     arc4.UInt64(refund_amount),
+    // )
+    frame_dig 0
+    frame_dig -1
+    concat
+    swap
+    concat
+    pushbytes 0xa977cc7e // method "ScheduleCancelled(address,uint64,uint64)"
+    swap
+    concat
+    log
+    // cresca_calendar_payments.py:341
+    // return arc4.Bool(True)
+    bytec 6 // 0x80
+    frame_bury 0
+    retsub
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.is_executable(payer: bytes, schedule_id: bytes) -> bytes:
+is_executable:
+    // cresca_calendar_payments.py:343-347
+    // # ------------------------------------------------------------------
+    // # Read-only views
+    // # ------------------------------------------------------------------
+    // @abimethod(readonly=True)
+    // def is_executable(self, payer: arc4.Address, schedule_id: arc4.UInt64) -> arc4.Bool:
+    proto 2 1
+    intc_1 // 0
+    pushbytes ""
+    // cresca_calendar_payments.py:349
+    // schedule_key = _schedule_key(payer.native.bytes, schedule_id.native)
+    frame_dig -1
+    btoi
+    // cresca_calendar_payments.py:62
+    // return payer + op.itob(schedule_id)
+    itob
+    frame_dig -2
+    swap
+    concat
+    // cresca_calendar_payments.py:350
+    // if schedule_key not in self.schedules:
+    bytec_3 // 0x7363685f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    bnz is_executable_after_if_else@2
+    // cresca_calendar_payments.py:351
+    // return arc4.Bool(False)
+    bytec_1 // 0x00
+    frame_bury 0
+    retsub
+
+is_executable_after_if_else@2:
+    // cresca_calendar_payments.py:352
+    // schedule = self.schedules[schedule_key].copy()
+    frame_dig 2
+    box_get
+    swap
+    dup
+    cover 2
+    frame_bury 0
+    assert // check self.schedules entry exists
+    // cresca_calendar_payments.py:353
+    // if not schedule.active.native:
+    intc 4 // 832
+    getbit
+    bytec_1 // 0x00
+    intc_1 // 0
+    uncover 2
+    setbit
+    intc_1 // 0
+    getbit
+    bnz is_executable_after_if_else@4
+    // cresca_calendar_payments.py:354
+    // return arc4.Bool(False)
+    bytec_1 // 0x00
+    frame_bury 0
+    retsub
+
+is_executable_after_if_else@4:
+    // cresca_calendar_payments.py:355
+    // if schedule.executed_count.native >= schedule.occurrences.native:
+    frame_dig 0
+    dup
+    pushint 96 // 96
+    extract_uint64
+    dup
+    cover 2
+    frame_bury 1
+    pushint 88 // 88
+    extract_uint64
+    >=
+    bz is_executable_after_if_else@6
+    // cresca_calendar_payments.py:356
+    // return arc4.Bool(False)
+    bytec_1 // 0x00
+    frame_bury 0
+    retsub
+
+is_executable_after_if_else@6:
+    // cresca_calendar_payments.py:357
+    // next_exec = schedule.execute_at.native + (
+    frame_dig 0
+    dup
+    pushint 72 // 72
+    extract_uint64
+    // cresca_calendar_payments.py:358
+    // schedule.executed_count.native * schedule.interval_seconds.native
+    swap
+    pushint 80 // 80
+    extract_uint64
+    frame_dig 1
+    *
+    // cresca_calendar_payments.py:357-359
+    // next_exec = schedule.execute_at.native + (
+    //     schedule.executed_count.native * schedule.interval_seconds.native
+    // )
+    +
+    // cresca_calendar_payments.py:360
+    // return arc4.Bool(Global.latest_timestamp >= next_exec)
+    global LatestTimestamp
+    <=
+    bytec_1 // 0x00
+    intc_1 // 0
+    uncover 2
+    setbit
+    frame_bury 0
+    retsub
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.get_next_execution_time(payer: bytes, schedule_id: bytes) -> bytes:
+get_next_execution_time:
+    // cresca_calendar_payments.py:362-365
+    // @abimethod(readonly=True)
+    // def get_next_execution_time(
+    //     self, payer: arc4.Address, schedule_id: arc4.UInt64
+    // ) -> arc4.UInt64:
+    proto 2 1
+    intc_1 // 0
+    pushbytes ""
+    // cresca_calendar_payments.py:367
+    // schedule_key = _schedule_key(payer.native.bytes, schedule_id.native)
+    frame_dig -1
+    btoi
+    // cresca_calendar_payments.py:62
+    // return payer + op.itob(schedule_id)
+    itob
+    frame_dig -2
+    swap
+    concat
+    // cresca_calendar_payments.py:368
+    // if schedule_key not in self.schedules:
+    bytec_3 // 0x7363685f
+    swap
+    concat
+    dup
+    box_len
+    bury 1
+    bnz get_next_execution_time_after_if_else@2
+    // cresca_calendar_payments.py:369
+    // return arc4.UInt64(0)
+    bytec_2 // 0x0000000000000000
+    frame_bury 0
+    retsub
+
+get_next_execution_time_after_if_else@2:
+    // cresca_calendar_payments.py:370
+    // schedule = self.schedules[schedule_key].copy()
+    frame_dig 2
+    box_get
+    swap
+    dup
+    cover 2
+    frame_bury 0
+    assert // check self.schedules entry exists
+    // cresca_calendar_payments.py:371
+    // if not schedule.active.native or schedule.executed_count.native >= schedule.occurrences.native:
+    intc 4 // 832
+    getbit
+    bytec_1 // 0x00
+    intc_1 // 0
+    uncover 2
+    setbit
+    intc_1 // 0
+    getbit
+    bz get_next_execution_time_if_body@4
+    frame_dig 0
+    dup
+    pushint 96 // 96
+    extract_uint64
+    dup
+    cover 2
+    frame_bury 1
+    pushint 88 // 88
+    extract_uint64
+    >=
+    bz get_next_execution_time_after_if_else@5
+
+get_next_execution_time_if_body@4:
+    // cresca_calendar_payments.py:372
+    // return arc4.UInt64(0)
+    bytec_2 // 0x0000000000000000
+    frame_bury 0
+    retsub
+
+get_next_execution_time_after_if_else@5:
+    // cresca_calendar_payments.py:374
+    // schedule.execute_at.native
+    frame_dig 0
+    dup
+    pushint 72 // 72
+    extract_uint64
+    // cresca_calendar_payments.py:375
+    // + schedule.executed_count.native * schedule.interval_seconds.native
+    swap
+    pushint 80 // 80
+    extract_uint64
+    frame_dig 1
+    *
+    // cresca_calendar_payments.py:374-375
+    // schedule.execute_at.native
+    // + schedule.executed_count.native * schedule.interval_seconds.native
+    +
+    // cresca_calendar_payments.py:373-376
+    // return arc4.UInt64(
+    //     schedule.execute_at.native
+    //     + schedule.executed_count.native * schedule.interval_seconds.native
+    // )
+    itob
+    frame_bury 0
+    retsub
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.get_total_schedules() -> bytes:
+get_total_schedules:
+    // cresca_calendar_payments.py:380
+    // return arc4.UInt64(self.total_schedules.value)
+    intc_1 // 0
+    bytec 4 // "total_schedules"
+    app_global_get_ex
+    assert // check self.total_schedules exists
+    itob
+    retsub
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.get_total_executed() -> bytes:
+get_total_executed:
+    // cresca_calendar_payments.py:384
+    // return arc4.UInt64(self.total_executed.value)
+    intc_1 // 0
+    bytec 5 // "total_executed"
+    app_global_get_ex
+    assert // check self.total_executed exists
+    itob
+    retsub
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.get_user_schedule_count(user: bytes) -> bytes:
+get_user_schedule_count:
+    // cresca_calendar_payments.py:386-387
+    // @abimethod(readonly=True)
+    // def get_user_schedule_count(self, user: arc4.Address) -> arc4.UInt64:
+    proto 1 1
+    // cresca_calendar_payments.py:388
+    // if user in self.schedule_counts:
+    bytec 7 // 0x636e745f
+    frame_dig -1
+    concat
+    dup
+    box_len
+    bury 1
+    bz get_user_schedule_count_after_if_else@2
+    // cresca_calendar_payments.py:389
+    // return self.schedule_counts[user]
+    frame_dig 0
+    box_get
+    assert // check self.schedule_counts entry exists
+    swap
+    retsub
+
+get_user_schedule_count_after_if_else@2:
+    // cresca_calendar_payments.py:390
+    // return arc4.UInt64(0)
+    bytec_2 // 0x0000000000000000
+    swap
+    retsub
+
+
+// cresca_calendar_payments.CrescaCalendarPayments.fund_contract(payment_txn: uint64) -> bytes:
+fund_contract:
+    // cresca_calendar_payments.py:392-396
+    // # ------------------------------------------------------------------
+    // # fund_contract
+    // # ------------------------------------------------------------------
+    // @abimethod
+    // def fund_contract(self, payment_txn: gtxn.PaymentTransaction) -> arc4.Bool:
+    proto 1 1
+    // cresca_calendar_payments.py:402
+    // assert payment_txn.receiver == Global.current_application_address, "Must send to contract"
+    frame_dig -1
+    gtxns Receiver
+    global CurrentApplicationAddress
+    ==
+    assert // Must send to contract
+    // cresca_calendar_payments.py:403
+    // assert payment_txn.amount > UInt64(0), "Amount must be > 0"
+    frame_dig -1
+    gtxns Amount
+    assert // Amount must be > 0
+    // cresca_calendar_payments.py:404
+    // return arc4.Bool(True)
+    bytec 6 // 0x80
+    retsub
