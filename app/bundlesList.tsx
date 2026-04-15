@@ -2,311 +2,201 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import {
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer } from '../components/ScreenContainer';
+import { Colors, Radius, Shadow, Spacing, Typography } from '../constants/theme';
 
-interface Bundle {
+interface BundleItem {
   id: string;
   name: string;
-  description: string;
+  subtitle: string;
   composition: string;
   risk: 'Low' | 'Medium' | 'High';
-  icon: string;
-  color: string;
-  assets: Array<{ symbol: string; weight: number }>;
+  leverageCap: string;
 }
+
+const BUNDLES: BundleItem[] = [
+  {
+    id: 'standard',
+    name: 'Standard DART Bundle',
+    subtitle: 'Balanced synthetic exposure for testnet trading',
+    composition: 'ALGO 60%  ·  USDC 40%',
+    risk: 'Medium',
+    leverageCap: '1x-40x',
+  },
+  {
+    id: 'defensive',
+    name: 'Defensive ALGO Basket',
+    subtitle: 'Lower-volatility profile anchored on ALGO',
+    composition: 'ALGO 80%  ·  USDC 20%',
+    risk: 'Low',
+    leverageCap: '1x-20x',
+  },
+  {
+    id: 'tactical',
+    name: 'Tactical Momentum Basket',
+    subtitle: 'Faster profile for active directional setups',
+    composition: 'ALGO 45%  ·  USDC 55%',
+    risk: 'High',
+    leverageCap: '1x-40x',
+  },
+];
 
 export default function BundlesListScreen() {
   const router = useRouter();
 
-  const bundles: Bundle[] = [
-    {
-      id: 'standard',
-      name: 'The Standard Bundle',
-      description: 'Balanced exposure across major cryptocurrencies',
-      composition: 'BTC 50% • ETH 30% • SOL 20%',
-      risk: 'Medium',
-      icon: '⚖️',
-      color: '#6C5CE7',
-      assets: [
-        { symbol: 'BTC', weight: 50 },
-        { symbol: 'ETH', weight: 30 },
-        { symbol: 'SOL', weight: 20 },
-      ],
-    },
-    {
-      id: 'aggressive',
-      name: 'Aggressive Growth',
-      description: 'High risk, high reward altcoin portfolio',
-      composition: 'SOL 40% • ETH 35% • BTC 25%',
-      risk: 'High',
-      icon: '🚀',
-      color: '#EF4444',
-      assets: [
-        { symbol: 'SOL', weight: 40 },
-        { symbol: 'ETH', weight: 35 },
-        { symbol: 'BTC', weight: 25 },
-      ],
-    },
-    {
-      id: 'conservative',
-      name: 'Conservative Blue Chip',
-      description: 'Low risk portfolio focused on Bitcoin and Ethereum',
-      composition: 'BTC 60% • ETH 40%',
-      risk: 'Low',
-      icon: '🛡️',
-      color: '#10B981',
-      assets: [
-        { symbol: 'BTC', weight: 60 },
-        { symbol: 'ETH', weight: 40 },
-      ],
-    },
-  ];
-
-  const getRiskColor = (risk: string) => {
-    switch (risk) {
-      case 'Low':
-        return { bg: '#D1FAE5', text: '#059669' };
-      case 'Medium':
-        return { bg: '#FEF3C7', text: '#D97706' };
-      case 'High':
-        return { bg: '#FEE2E2', text: '#DC2626' };
-      default:
-        return { bg: '#F3F4F6', text: '#6B7280' };
-    }
-  };
-
-  const handleBundlePress = (bundle: Bundle) => {
-    router.push({
-      pathname: '/bundleTrade',
-      params: {
-        bundleId: bundle.id,
-        bundleName: bundle.name,
-        composition: bundle.composition,
-        risk: bundle.risk,
-      },
-    });
+  const riskStyle = (risk: BundleItem['risk']) => {
+    void risk;
+    return { bg: '#2E4D6B55', fg: Colors.navy };
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Bundle Trading</Text>
-        <Text style={styles.headerSubtitle}>Choose your investment strategy</Text>
-      </View>
+    <ScreenContainer style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.hero}>
+          <Text style={styles.title}>Dynamic Bundles</Text>
+          <Text style={styles.subtitle}>Pick a profile, then open your synthetic bucket position on Algorand testnet.</Text>
+        </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Info Card */}
         <View style={styles.infoCard}>
-          <Ionicons name="information-circle" size={24} color="#6C5CE7" />
-          <View style={styles.infoTextContainer}>
-            <Text style={styles.infoTitle}>What are Bundles?</Text>
-            <Text style={styles.infoDescription}>
-              Bundles are pre-built portfolios of cryptocurrencies. Trade them with leverage up to 40x.
-            </Text>
-          </View>
+          <Ionicons name="flash" size={18} color={Colors.navy} />
+          <Text style={styles.infoText}>Live pricing and execution are routed through DART + Algorand contracts.</Text>
         </View>
 
-        {/* Bundles List */}
-        <View style={styles.bundlesContainer}>
-          {bundles.map((bundle) => {
-            const riskColors = getRiskColor(bundle.risk);
-            
-            return (
-              <TouchableOpacity
-                key={bundle.id}
-                style={styles.bundleCard}
-                onPress={() => handleBundlePress(bundle)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.bundleIconContainer, { backgroundColor: bundle.color }]}>
-                  <Text style={styles.bundleIcon}>{bundle.icon}</Text>
+        {BUNDLES.map((bundle) => {
+          const badge = riskStyle(bundle.risk);
+          return (
+            <TouchableOpacity
+              key={bundle.id}
+              activeOpacity={0.85}
+              style={styles.card}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${bundle.name} bundle, ${bundle.risk} risk`}
+              onPress={() =>
+                router.push({
+                  pathname: '/bundleTrade',
+                  params: {
+                    bundleId: bundle.id,
+                    bundleName: bundle.name,
+                    composition: bundle.composition,
+                    risk: bundle.risk,
+                  },
+                })
+              }
+            >
+              <View style={styles.cardHead}>
+                <Text style={styles.cardTitle}>{bundle.name}</Text>
+                <View style={[styles.riskBadge, { backgroundColor: badge.bg }]}>
+                  <Text style={[styles.riskText, { color: badge.fg }]}>{bundle.risk}</Text>
                 </View>
+              </View>
 
-                <View style={styles.bundleContent}>
-                  <View style={styles.bundleHeader}>
-                    <Text style={styles.bundleName}>{bundle.name}</Text>
-                    <View style={[styles.riskBadge, { backgroundColor: riskColors.bg }]}>
-                      <Text style={[styles.riskText, { color: riskColors.text }]}>
-                        {bundle.risk} Risk
-                      </Text>
-                    </View>
-                  </View>
+              <Text style={styles.cardSubtitle}>{bundle.subtitle}</Text>
+              <Text style={styles.composition}>{bundle.composition}</Text>
 
-                  <Text style={styles.bundleDescription}>{bundle.description}</Text>
-                  <Text style={styles.bundleComposition}>{bundle.composition}</Text>
-
-                  {/* Asset Pills */}
-                  <View style={styles.assetPills}>
-                    {bundle.assets.map((asset) => (
-                      <View key={asset.symbol} style={styles.assetPill}>
-                        <Text style={styles.assetPillText}>
-                          {asset.symbol} {asset.weight}%
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-
-                <Ionicons name="chevron-forward" size={24} color="#9CA3AF" />
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Bottom Info */}
-        <View style={styles.bottomInfo}>
-          <Ionicons name="shield-checkmark" size={20} color="#6C5CE7" />
-          <Text style={styles.bottomInfoText}>
-            All bundles are executed on Monad Testnet with smart contracts
-          </Text>
-        </View>
+              <View style={styles.cardFoot}>
+                <Text style={styles.meta}>Leverage {bundle.leverageCap}</Text>
+                <Ionicons name="arrow-forward" size={18} color={Colors.steel} />
+              </View>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: Colors.bg.screen,
   },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+  content: {
+    padding: Spacing.lg,
+    gap: Spacing.md,
   },
-  headerTitle: {
-    fontSize: 28,
+  hero: {
+    marginBottom: Spacing.sm,
+  },
+  title: {
+    fontSize: Typography.xl,
     fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 4,
+    color: Colors.text.primary,
   },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  scrollView: {
-    flex: 1,
+  subtitle: {
+    marginTop: Spacing.xs,
+    fontSize: Typography.sm,
+    color: Colors.text.secondary,
+    lineHeight: 20,
   },
   infoCard: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    margin: 20,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: '#F0F3FF',
-  },
-  infoTextContainer: {
-    flex: 1,
-  },
-  infoTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginBottom: 4,
-  },
-  infoDescription: {
-    fontSize: 13,
-    color: '#6B7280',
-    lineHeight: 18,
-  },
-  bundlesContainer: {
-    paddingHorizontal: 20,
-    gap: 16,
-  },
-  bundleCard: {
-    flexDirection: 'row',
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: '#F9FAFB',
+    gap: Spacing.sm,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.bg.subtle,
+    padding: Spacing.md,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: Colors.border,
   },
-  bundleIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  bundleIcon: {
-    fontSize: 24,
-  },
-  bundleContent: {
+  infoText: {
     flex: 1,
+    color: Colors.text.primary,
+    fontSize: Typography.sm,
+    fontWeight: '500',
   },
-  bundleHeader: {
+  card: {
+    borderRadius: Radius.xl,
+    backgroundColor: Colors.bg.card,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Shadow.card,
+  },
+  cardHead: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
   },
-  bundleName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1F2937',
+  cardTitle: {
     flex: 1,
+    color: Colors.text.primary,
+    fontWeight: '700',
+    fontSize: Typography.md,
+    marginRight: Spacing.sm,
   },
   riskBadge: {
-    paddingHorizontal: 10,
+    paddingHorizontal: Spacing.sm,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: Radius.full,
   },
   riskText: {
-    fontSize: 11,
+    fontSize: Typography.xs,
+    fontWeight: '700',
+  },
+  cardSubtitle: {
+    marginTop: Spacing.sm,
+    color: Colors.text.secondary,
+    fontSize: Typography.sm,
+  },
+  composition: {
+    marginTop: Spacing.sm,
+    color: Colors.text.primary,
     fontWeight: '600',
+    fontSize: Typography.base,
   },
-  bundleDescription: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginBottom: 6,
-  },
-  bundleComposition: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#4B5563',
-    marginBottom: 10,
-  },
-  assetPills: {
+  cardFoot: {
+    marginTop: Spacing.md,
     flexDirection: 'row',
-    gap: 6,
-    flexWrap: 'wrap',
-  },
-  assetPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: '#E5E7EB',
-  },
-  assetPillText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#4B5563',
-  },
-  bottomInfo: {
-    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
-    margin: 20,
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: '#F9FAFB',
   },
-  bottomInfoText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#6B7280',
-    lineHeight: 16,
+  meta: {
+    color: Colors.text.secondary,
+    fontSize: Typography.sm,
   },
 });

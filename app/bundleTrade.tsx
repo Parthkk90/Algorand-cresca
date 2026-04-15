@@ -1,181 +1,374 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Linking,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-    PanResponder,
+  ActivityIndicator,
+  Linking,
+  PanResponder,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { crescaBucketProtocolService } from '../services/contractServices';
-import { web3Service } from '../services/web3Service';
-import { priceService, BundlePrice } from '../services/priceService';
+import { AppNoticeAction, AppNoticeModal } from '../components/AppNoticeModal';
+import { ScreenContainer } from '../components/ScreenContainer';
+import { HapticButton } from '../components/HapticButton';
+import { InlineError } from '../components/InlineError';
+import { TxSuccessCard } from '../components/TxSuccessCard';
+import { BASKETS, Basket, basketToContractArgs, getBasket } from '../constants/baskets';
+import { Colors, Radius, Shadow, Spacing, Typography } from '../constants/theme';
+import { algorandService } from '../services/algorandService';
+import { crescaBucketService } from '../services/algorandContractServices';
+import { dartRouterService } from '../services/dartRouterService';
+import { pythOracleService } from '../services/pythOracleService';
+import { positionStore } from '../services/positionStore';
+
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+function formatUSD(price: number): string {
+  if (price >= 10_000) return `$${Math.round(price).toLocaleString()}`;
+  if (price >= 100)    return `$${price.toFixed(0)}`;
+  if (price >= 1)      return `$${price.toFixed(2)}`;
+  return `$${price.toFixed(3)}`;
+}
+
+function normalizeAlgoInput(raw: string): string {
+  const replaced = raw.replace(/,/g, '.').replace(/[^0-9.]/g, '');
+  const firstDot = replaced.indexOf('.');
+  const compact = firstDot === -1
+    ? replaced
+    : `${replaced.slice(0, firstDot + 1)}${replaced.slice(firstDot + 1).replace(/\./g, '')}`;
+
+  const [intPart, decPart] = compact.split('.');
+  if (decPart === undefined) return intPart;
+  return `${intPart}.${decPart.slice(0, 6)}`; // microALGO precision
+}
+
+function parseAlgoAmount(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+// ─── screen ─────────────────────────────────────────────────────────────────
 
 export default function BundleTradeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const [walletAddress, setWalletAddress] = useState('');
-  const [balance, setBalance] = useState('0.000');
-  const [isLoading, setIsLoading] = useState(true);
-  const [investmentAmount, setInvestmentAmount] = useState('');
-  const [leverage, setLeverage] = useState(1);
-  const [positionType, setPositionType] = useState<'long' | 'short'>('long');
-  const [bucketId, setBucketId] = useState<number | null>(null);
-  const [bundlePrices, setBundlePrices] = useState<BundlePrice | null>(null);
-  const [priceLoading, setPriceLoading] = useState(false);
-  const sliderWidthRef = React.useRef(0);
 
-  const handleLeverageUpdate = React.useCallback((locationX: number) => {
-    if (sliderWidthRef.current === 0) return;
-    const position = Math.max(0, Math.min(locationX, sliderWidthRef.current));
-    const percentage = position / sliderWidthRef.current;
-    const newLeverage = Math.max(1, Math.min(40, Math.round(percentage * 39 + 1)));
-    setLeverage(newLeverage);
-  }, []);
+  const basket: Basket =
+    getBasket(params.basketId as string) ??
+    getBasket(params.bundleId  as string) ??
+    BASKETS[0];
 
-  const panResponder = React.useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: (evt) => handleLeverageUpdate(evt.nativeEvent.locationX),
-        onPanResponderMove: (evt) => handleLeverageUpdate(evt.nativeEvent.locationX),
-      }),
-    [handleLeverageUpdate]
-  );
+  const { asaIds, weights } = basketToContractArgs(basket);
+  const symbols = basket.assets.map((a) => a.symbol);
+
+  const [balance,     setBalance]     = useState('0.000');
+  const [amount,      setAmount]      = useState('');
+  const [leverage,    setLeverage]    = useState(5);
+  const [direction,   setDirection]   = useState<'long' | 'short'>('long');
+  const [busy,        setBusy]        = useState(true);
+  const [bucketId,    setBucketId]    = useState<number | null>(null);
+  const [oracleAlive, setOracleAlive] = useState<boolean | null>(null);
+
+  // USD prices for display
+  const [usdPrices,   setUsdPrices]   = useState<Record<string, number>>({});
+  // ALGO-denom prices for the contract
+  const [algoPrices,  setAlgoPrices]  = useState<Map<number, number>>(new Map());
+
+  const [tradeError,  setTradeError]  = useState('');
+  const [lastTradeTxId, setLastTradeTxId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ title: string; message: string; actions?: AppNoticeAction[] } | null>(null);
+  const sliderWidthRef = React.useRef(1);
+
+  const setLeverageFromX = (x: number) => {
+    const width = Math.max(1, sliderWidthRef.current);
+    const clamped = Math.max(0, Math.min(x, width));
+    const normalized = clamped / width;
+    const value = Math.round(normalized * 40); // 0x..40x
+    setLeverage(value);
+  };
+
+  const panResponder = React.useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (evt) => {
+        setLeverageFromX(evt.nativeEvent.locationX);
+      },
+      onPanResponderMove: (evt) => {
+        setLeverageFromX(evt.nativeEvent.locationX);
+      },
+      onPanResponderRelease: () => {
+        void Haptics.selectionAsync();
+      },
+    }),
+  ).current;
 
   useEffect(() => {
-    initializeWallet();
-    loadPrices();
-    
-    // Refresh prices every 30 seconds
-    const priceInterval = setInterval(() => {
-      loadPrices();
-    }, 30000);
-    
-    return () => clearInterval(priceInterval);
+    void init();
   }, []);
 
-  const initializeWallet = async () => {
+  const init = async () => {
     try {
-      const walletData = await web3Service.initializeWallet();
-      setWalletAddress(walletData.address);
-      
-      const walletBalance = await web3Service.getBalance();
-      setBalance(parseFloat(walletBalance).toFixed(3));
-    } catch (error) {
-      console.error('Error initializing wallet:', error);
+      await algorandService.initializeWallet();
+      const bal = await algorandService.getBalance();
+      setBalance(Number(bal.algo).toFixed(3));
+
+      // Fetch display prices (USD) and contract prices (ALGO-denom) in parallel
+      const [usdResult, algoResult] = await Promise.all([
+        pythOracleService.getPrices(symbols),
+        dartRouterService.getOraclePrices(asaIds),
+      ]);
+
+      const usd: Record<string, number> = {};
+      Object.entries(usdResult).forEach(([s, p]) => { usd[s] = p.price; });
+      setUsdPrices(usd);
+      setAlgoPrices(algoResult);
+      setOracleAlive(Object.keys(usd).length > 0 && algoResult.size > 0);
+    } catch {
+      setOracleAlive(false);
     } finally {
-      setIsLoading(false);
+      setBusy(false);
     }
   };
 
-  const loadPrices = async () => {
-    try {
-      setPriceLoading(true);
-      const prices = await priceService.getBundlePrices();
-      setBundlePrices(prices);
-      console.log('💰 Bundle prices loaded:', {
-        BTC: `$${prices.btc.price.toLocaleString()}`,
-        ETH: `$${prices.eth.price.toLocaleString()}`,
-        SOL: `$${prices.sol.price.toLocaleString()}`,
-      });
-    } catch (error) {
-      console.error('Error loading prices:', error);
-    } finally {
-      setPriceLoading(false);
-    }
-  };
+  const parsedMargin = parseAlgoAmount(amount);
+  const exposure = parsedMargin * leverage;
 
-  const handleExecuteTrade = async () => {
-    if (!investmentAmount || parseFloat(investmentAmount) <= 0) {
-      Alert.alert('Error', 'Please enter a valid investment amount');
+  const handleOpen = async () => {
+    setTradeError('');
+    setLastTradeTxId(null);
+    const amt = parseAlgoAmount(amount);
+
+    if (amt <= 0) {
+      setTradeError('Enter a positive ALGO amount.');
       return;
     }
-
-    if (parseFloat(investmentAmount) > parseFloat(balance)) {
-      Alert.alert('Error', 'Insufficient balance');
+    if (leverage < 1) {
+      setTradeError('Set leverage above 0x to execute a trade.');
+      return;
+    }
+    if (amt > parseAlgoAmount(balance)) {
+      setTradeError('Amount exceeds your ALGO balance.');
+      return;
+    }
+    if (oracleAlive === false) {
+      setTradeError('Oracle not ready — tap Refresh then try again.');
       return;
     }
 
     try {
-      setIsLoading(true);
-      
-      // Step 1: Create the standard bundle if not exists
-      let currentBucketId = bucketId;
-      if (currentBucketId === null) {
-        console.log('📦 Creating standard bundle...');
-        
-        // Create the standard bundle: BTC 50%, ETH 30%, SOL 20%
-        // Using dummy addresses for demo (would be real token addresses in production)
-        const dummyAddresses = [
-          '0x0000000000000000000000000000000000000001', // BTC
-          '0x0000000000000000000000000000000000000002', // ETH
-          '0x0000000000000000000000000000000000000003', // SOL
-        ];
-        
-        await crescaBucketProtocolService.createBucket(
-          dummyAddresses,
-          [50, 30, 20],
-          leverage
-        );
-        
-        currentBucketId = 0; // First bucket for this user
-        setBucketId(currentBucketId);
-        console.log('✅ Bundle created with ID:', currentBucketId);
+      setBusy(true);
+
+      const oraclePriceMap = await dartRouterService.getOraclePrices(asaIds);
+      const oracleIds    = Array.from(oraclePriceMap.keys());
+      const oraclePrices = oracleIds.map((id) => oraclePriceMap.get(id)!);
+      await crescaBucketService.updateOracle(oracleIds, oraclePrices);
+
+      await crescaBucketService.depositCollateral(amt);
+
+      let id = bucketId;
+      if (id === null) {
+        const result = await crescaBucketService.createBucket(asaIds, weights, leverage);
+        id = result.bucketId;
+        setBucketId(id);
       }
-      
-      // Step 2: Open position with auto-deposit
-      console.log('📈 Opening position on bundle...');
-      const txHash = await crescaBucketProtocolService.openPosition(
-        currentBucketId,
-        positionType === 'long',
-        investmentAmount
-      );
-      
-      const explorerUrl = `https://monad-testnet.socialscan.io/tx/${txHash}`;
-      
-      Alert.alert(
-        '✓ Trade Executed',
-        `Your ${positionType.toUpperCase()} position has been opened successfully with ${leverage}x leverage.`,
-        [
-          { text: 'View on Monadscan', onPress: () => Linking.openURL(explorerUrl) },
-          { text: 'OK', style: 'cancel' }
-        ]
-      );
-      
-      // Reset form
-      setInvestmentAmount('');
-      setLeverage(1);
-      
-      // Refresh balance
-      const newBalance = await web3Service.getBalance();
-      setBalance(parseFloat(newBalance).toFixed(3));
-      
-    } catch (error: any) {
-      console.error('❌ Trade execution failed:', error);
-      Alert.alert('Error', error.message || 'Failed to execute trade');
+
+      const opened = await crescaBucketService.openPosition(id, direction === 'long', amt, asaIds);
+      const url = `https://lora.algokit.io/testnet/transaction/${opened.txId}`;
+      setLastTradeTxId(opened.txId);
+
+      // Persist the position so bucket.tsx can show P&L + close
+      await positionStore.add({
+        positionId: opened.positionId,
+        bucketId:   id,
+        basketId:   basket.id,
+        asaIds,
+        leverage,
+        marginAlgo: amt,
+        openedAt:   Date.now(),
+        txId:       opened.txId,
+      });
+
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      setNotice({
+        title: 'Position Opened',
+        message: `${direction.toUpperCase()} position #${opened.positionId} opened on "${basket.name}" with ${leverage}x leverage.\nTx: ${opened.txId.slice(0, 8)}...${opened.txId.slice(-6)}\n\nYou can open the explorer link below or from this dialog.`,
+        actions: [
+          { label: 'View Tx', style: 'secondary', onPress: () => Linking.openURL(url) },
+          { label: 'Stay', style: 'secondary' },
+          { label: 'Back', style: 'primary', onPress: () => router.back() },
+        ],
+      });
+
+      setAmount('');
+      const bal = await algorandService.getBalance();
+      setBalance(Number(bal.algo).toFixed(3));
+    } catch (e: any) {
+      setTradeError(e?.message || 'Could not open position.');
     } finally {
-      setIsLoading(false);
+      setBusy(false);
     }
   };
 
-  const renderLeverageSlider = () => {
-    const sliderPosition = ((leverage - 1) / 39) * 100;
-
+  if (busy && usdPrices && Object.keys(usdPrices).length === 0) {
     return (
-      <View style={styles.leverageContainer}>
-        <Text style={styles.sectionLabel}>Leverage: {leverage}x</Text>
-        
-        <View style={styles.sliderContainer}>
-          <View 
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color={Colors.navy} />
+      </View>
+    );
+  }
+
+  const canTrade =
+    !busy &&
+    parsedMargin > 0 &&
+    parsedMargin <= parseAlgoAmount(balance) &&
+    leverage >= 1 &&
+    oracleAlive !== false;
+  const sliderPosition = (leverage / 40) * 100;
+
+  return (
+    <ScreenContainer style={styles.container} bottomInset={false}>
+
+      {/* ── Navigation header ── */}
+      <View style={styles.navBar}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+        >
+          <Ionicons name="arrow-back" size={22} color={Colors.navy} />
+        </TouchableOpacity>
+        <Text style={styles.navTitle} numberOfLines={1}>{basket.name}</Text>
+        <TouchableOpacity
+          onPress={() => void init()}
+          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh prices"
+        >
+          <Ionicons name="refresh-outline" size={20} color={Colors.steel} />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+
+        {/* ── Bundle overview card ── */}
+        <View style={styles.overviewCard}>
+          <Text style={styles.overviewDesc}>{basket.description}</Text>
+
+          {/* Asset composition + live USD prices */}
+          <View style={styles.pricesTable}>
+            {basket.assets.map((a, i) => {
+              const usd = usdPrices[a.symbol];
+              const isLast = i === basket.assets.length - 1;
+              return (
+                <View
+                  key={a.asaId}
+                  style={[styles.priceRow, !isLast && styles.priceRowBorder]}
+                >
+                  <View style={styles.priceLeft}>
+                    <Text style={styles.priceSym}>{a.symbol}</Text>
+                    <View style={styles.weightPill}>
+                      <Text style={styles.weightPillText}>{a.weight}%</Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.priceUSD, { fontVariant: ['tabular-nums'] }]}>
+                    {usd != null ? formatUSD(usd) : busy ? '…' : '—'}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Oracle status */}
+          <View style={styles.oracleRow}>
+            <View style={[
+              styles.oracleDot,
+              { backgroundColor: oracleAlive === false ? Colors.loss : oracleAlive === true ? Colors.gain : Colors.steel },
+            ]} />
+            <Text style={styles.oracleText}>
+              {oracleAlive === false
+                ? 'Oracle unavailable — tap refresh'
+                : oracleAlive === true
+                ? 'Oracle synced · Pyth Network'
+                : 'Loading oracle…'}
+            </Text>
+          </View>
+        </View>
+
+        {/* ── Margin input (compact) ── */}
+        <View style={styles.marginCard}>
+          <Text style={styles.sectionLabel}>Margin</Text>
+          <View style={styles.inputRow}>
+            <TextInput
+              value={amount}
+              onChangeText={(v) => { setAmount(normalizeAlgoInput(v)); setTradeError(''); }}
+              keyboardType="decimal-pad"
+              placeholder="0.0"
+              placeholderTextColor={Colors.text.muted}
+              style={styles.input}
+              accessibilityLabel="Enter margin amount in ALGO"
+            />
+            <View style={styles.inputCurrency}>
+              <Text style={styles.currencyText}>ALGO</Text>
+            </View>
+          </View>
+          <Text style={styles.hint}>Available: {balance} ALGO</Text>
+          <TouchableOpacity
+            style={styles.maxBtn}
+            onPress={() => {
+              setAmount(balance);
+              setTradeError('');
+              void Haptics.selectionAsync();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Use max available margin"
+          >
+            <Text style={styles.maxBtnText}>Use Max</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Direction ── */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Direction</Text>
+          <View style={styles.directionRow}>
+            <TouchableOpacity
+              style={[styles.directionBtn, direction === 'long' && styles.directionBtnLongActive]}
+              onPress={() => {
+                setDirection('long');
+                void Haptics.selectionAsync();
+              }}
+            >
+              <Ionicons name="trending-up" size={16} color={Colors.white} />
+              <Text style={styles.dirText}>Long</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.directionBtn, direction === 'short' && styles.directionBtnShortActive]}
+              onPress={() => {
+                setDirection('short');
+                void Haptics.selectionAsync();
+              }}
+            >
+              <Ionicons name="trending-down" size={16} color={Colors.white} />
+              <Text style={styles.dirText}>Short</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* ── Leverage (drag slider) ── */}
+        <View style={styles.section}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.sectionLabel}>Leverage</Text>
+            <Text style={styles.levValue}>{leverage}x</Text>
+          </View>
+          <View
             style={styles.sliderTrack}
             onLayout={(e) => {
               sliderWidthRef.current = e.nativeEvent.layout.width;
@@ -185,534 +378,309 @@ export default function BundleTradeScreen() {
             <View style={[styles.sliderFill, { width: `${sliderPosition}%` }]} />
             <View style={[styles.sliderThumb, { left: `${sliderPosition}%` }]} />
           </View>
-          
           <View style={styles.sliderLabels}>
-            <Text style={styles.sliderLabel}>1x</Text>
-            <Text style={styles.sliderLabel}>40x</Text>
-          </View>
-        </View>
-      </View>
-    );
-  };
-
-  if (isLoading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6C5CE7" />
-      </View>
-    );
-  }
-
-  const totalExposure = parseFloat(investmentAmount || '0') * leverage;
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.scrollView}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#1F2937" />
-          </TouchableOpacity>
-          <View>
-            <Text style={styles.headerTitle}>Bundle Trading</Text>
-            <Text style={styles.headerSubtitle}>{params.bundleName || 'The Standard Bundle'}</Text>
-          </View>
-          <View style={{ width: 24 }} />
-        </View>
-
-        {/* Bundle Info Card */}
-        <View style={styles.bundleCard}>
-          <View style={styles.bundleHeader}>
-            <Ionicons name="trending-up" size={20} color="#6C5CE7" />
-            <Text style={styles.bundleTitle}>{params.bundleName || 'The Standard Bundle'}</Text>
-            {priceLoading && <ActivityIndicator size="small" color="#6C5CE7" />}
-          </View>
-          <Text style={styles.bundleComposition}>{params.composition || 'BTC 50% • ETH 30% • SOL 20%'}</Text>
-          
-          {/* Live Prices */}
-          {bundlePrices && (
-            <View style={styles.pricesContainer}>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>BTC</Text>
-                <Text style={styles.priceValue}>${bundlePrices.btc.price.toLocaleString()}</Text>
-                <Text style={[
-                  styles.priceChange,
-                  bundlePrices.btc.change24h >= 0 ? styles.priceUp : styles.priceDown
-                ]}>
-                  {bundlePrices.btc.change24h >= 0 ? '+' : ''}{bundlePrices.btc.change24h.toFixed(2)}%
-                </Text>
-              </View>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>ETH</Text>
-                <Text style={styles.priceValue}>${bundlePrices.eth.price.toLocaleString()}</Text>
-                <Text style={[
-                  styles.priceChange,
-                  bundlePrices.eth.change24h >= 0 ? styles.priceUp : styles.priceDown
-                ]}>
-                  {bundlePrices.eth.change24h >= 0 ? '+' : ''}{bundlePrices.eth.change24h.toFixed(2)}%
-                </Text>
-              </View>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>SOL</Text>
-                <Text style={styles.priceValue}>${bundlePrices.sol.price.toLocaleString()}</Text>
-                <Text style={[
-                  styles.priceChange,
-                  bundlePrices.sol.change24h >= 0 ? styles.priceUp : styles.priceDown
-                ]}>
-                  {bundlePrices.sol.change24h >= 0 ? '+' : ''}{bundlePrices.sol.change24h.toFixed(2)}%
-                </Text>
-              </View>
-            </View>
-          )}
-          
-          <View style={styles.riskBadge}>
-            <Text style={styles.riskText}>Medium Risk</Text>
+            <Text style={styles.hint}>0x</Text>
+            <Text style={styles.hint}>40x</Text>
           </View>
         </View>
 
-        {/* Investment Amount */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Investment Amount</Text>
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              value={investmentAmount}
-              onChangeText={setInvestmentAmount}
-              placeholder="0.0"
-              placeholderTextColor="#9CA3AF"
-              keyboardType="decimal-pad"
-            />
-            <Text style={styles.inputCurrency}>MON</Text>
-          </View>
-          <Text style={styles.hint}>Minimum: 0.1 MON</Text>
-        </View>
+        <InlineError message={tradeError} />
 
-        {/* Leverage Slider */}
-        {renderLeverageSlider()}
-
-        {/* Position Direction */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Position Direction</Text>
-          <View style={styles.positionButtons}>
-            <TouchableOpacity
-              style={[
-                styles.positionButton,
-                styles.longButton,
-                positionType === 'long' && styles.positionButtonActive
-              ]}
-              onPress={() => setPositionType('long')}
-            >
-              <Ionicons name="trending-up" size={20} color="#FFFFFF" />
-              <Text style={styles.positionButtonText}>LONG</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.positionButton,
-                styles.shortButton,
-                positionType === 'short' && styles.positionButtonActive
-              ]}
-              onPress={() => setPositionType('short')}
-            >
-              <Ionicons name="trending-down" size={20} color="#EF4444" />
-              <Text style={[styles.positionButtonText, styles.shortButtonText]}>SHORT</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.hint}>
-            Profit when bundle price {positionType === 'long' ? 'increases' : 'decreases'}
-          </Text>
-        </View>
-
-        {/* Transaction Summary */}
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>Transaction Summary</Text>
-          
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Investment</Text>
-            <Text style={styles.summaryValue}>{investmentAmount || '0'} MON</Text>
-          </View>
-
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Leverage</Text>
-            <Text style={styles.summaryValue}>{leverage}x</Text>
-          </View>
-
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Position</Text>
-            <Text style={[
-              styles.summaryValue,
-              positionType === 'long' ? styles.longText : styles.shortText
-            ]}>
-              {positionType.toUpperCase()}
-            </Text>
-          </View>
-
-          <View style={styles.summaryDivider} />
-
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabelBold}>Total Exposure</Text>
-            <Text style={styles.summaryValueBold}>
-              {investmentAmount && !isNaN(parseFloat(investmentAmount))
-                ? (parseFloat(investmentAmount) * leverage).toFixed(2)
-                : '0.00'} MON
-            </Text>
-          </View>
-        </View>
-
-        {/* Execute Button */}
-        <TouchableOpacity
-          style={styles.executeButton}
-          onPress={handleExecuteTrade}
-          disabled={isLoading || !investmentAmount}
+        {/* ── Execute (directly below leverage) ── */}
+        <HapticButton
+          style={canTrade ? styles.cta : { ...styles.cta, ...styles.ctaDisabled }}
+          onPress={handleOpen}
+          disabled={!canTrade}
+          hapticStyle={Haptics.ImpactFeedbackStyle.Heavy}
+          accessibilityLabel={`Execute ${direction} trade with ${leverage}x leverage on ${basket.name}`}
         >
-          <Ionicons name="flash" size={20} color="#FFFFFF" />
-          <Text style={styles.executeButtonText}>Execute Trade</Text>
-        </TouchableOpacity>
+          {busy
+            ? <ActivityIndicator size="small" color={Colors.white} />
+            : (
+              <>
+                <Ionicons name="flash" size={18} color={Colors.white} />
+                <Text style={styles.ctaText}>Execute Trade</Text>
+              </>
+            )
+          }
+        </HapticButton>
 
-        {/* Risk Warning */}
-        <View style={styles.warningCard}>
-          <Ionicons name="warning" size={20} color="#F59E0B" />
-          <Text style={styles.warningText}>
-            Leveraged trading involves significant risk. You may lose more than your initial investment.
+        {lastTradeTxId ? (
+          <TxSuccessCard
+            txId={lastTradeTxId}
+            onDismiss={() => setLastTradeTxId(null)}
+          />
+        ) : null}
+
+        {/* ── Order summary ── */}
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle}>Order Summary</Text>
+          {[
+            { label: 'Bundle',     value: basket.name },
+            { label: 'Margin',     value: `${parsedMargin.toFixed(3)} ALGO` },
+            { label: 'Leverage',   value: `${leverage}x` },
+            { label: 'Direction',  value: direction.toUpperCase(), highlight: true },
+          ].map(({ label, value, highlight }) => (
+            <View key={label} style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>{label}</Text>
+              <Text style={[styles.summaryValue, highlight && styles.highlightValue]}>{value}</Text>
+            </View>
+          ))}
+          <View style={[styles.summaryRow, styles.summaryTotalRow]}>
+            <Text style={styles.totalLabel}>Total Exposure</Text>
+            <Text style={[styles.totalValue, { fontVariant: ['tabular-nums'] }]}>
+              {exposure.toFixed(2)} ALGO
+            </Text>
+          </View>
+        </View>
+
+        {/* ── Risk notice ── */}
+        <View style={styles.riskNotice}>
+          <Ionicons name="information-circle-outline" size={16} color={Colors.steel} />
+          <Text style={styles.riskText}>
+            Leveraged positions may result in losses exceeding your margin. Testnet only.
           </Text>
         </View>
+
+        <Text style={styles.flowHint}>
+          Update Oracle → Deposit → Create Bucket → Open Position
+        </Text>
       </ScrollView>
-    </SafeAreaView>
+
+      <AppNoticeModal
+        visible={!!notice}
+        title={notice?.title ?? ''}
+        message={notice?.message ?? ''}
+        tone="success"
+        actions={notice?.actions}
+        onClose={() => setNotice(null)}
+      />
+
+    </ScreenContainer>
   );
 }
 
+// ─── styles ──────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  header: {
+  container: { flex: 1, backgroundColor: Colors.bg.screen },
+  loading:   { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.bg.screen },
+
+  // Nav
+  navBar: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1F2937',
-    textAlign: 'center',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: '#6B7280',
-    textAlign: 'center',
-  },
-  bundleCard: {
-    marginHorizontal: 20,
-    marginBottom: 24,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: '#F9FAFB',
+  backBtn:  { width: 36, height: 36, borderRadius: Radius.sm, backgroundColor: Colors.bg.subtle, justifyContent: 'center', alignItems: 'center' },
+  navTitle: { flex: 1, textAlign: 'center', fontSize: Typography.md, fontWeight: Typography.bold, color: Colors.text.primary, marginHorizontal: Spacing.md },
+
+  content: { padding: Spacing.lg, gap: Spacing.lg, paddingBottom: 120 },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+
+  // Overview card
+  overviewCard: {
+    backgroundColor: Colors.bg.card,
+    borderRadius: Radius.xl,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: Colors.border,
+    overflow: 'hidden',
+    ...Shadow.card,
   },
-  bundleHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+  overviewDesc: {
+    fontSize: Typography.sm,
+    color: Colors.text.secondary,
+    lineHeight: 20,
+    padding: Spacing.lg,
+    paddingBottom: Spacing.md,
   },
-  bundleTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-  },
-  bundleComposition: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 12,
-  },
-  pricesContainer: {
-    marginBottom: 12,
-    gap: 8,
+  pricesTable: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.divider,
+    marginHorizontal: Spacing.lg,
   },
   priceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingVertical: 10,
   },
-  priceLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1F2937',
-    width: 50,
-  },
-  priceValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1F2937',
-    flex: 1,
-  },
-  priceChange: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  priceUp: {
-    color: '#10B981',
-  },
-  priceDown: {
-    color: '#EF4444',
-  },
-  riskBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: '#FEF3C7',
-  },
-  riskText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#D97706',
-  },
-  section: {
-    marginBottom: 24,
-    paddingHorizontal: 20,
-  },
-  sectionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginBottom: 12,
-  },
-  inputContainer: {
+  priceRowBorder: { borderBottomWidth: 1, borderBottomColor: Colors.divider },
+  priceLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  priceSym:   { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.text.primary, width: 42 },
+  weightPill: { backgroundColor: Colors.bg.subtle, borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 2 },
+  weightPillText: { fontSize: Typography.xs, color: Colors.text.muted, fontWeight: Typography.medium },
+  priceUSD:   { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.navy },
+
+  oracleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
+    gap: 6,
+    padding: Spacing.lg,
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.divider,
+  },
+  oracleDot:  { width: 8, height: 8, borderRadius: 4 },
+  oracleText: { fontSize: Typography.xs, color: Colors.text.muted, flex: 1 },
+
+  // Section
+  section:      { gap: Spacing.sm },
+  sectionLabel: { fontSize: Typography.xs, fontWeight: Typography.bold, color: Colors.steel, textTransform: 'uppercase', letterSpacing: 0.8 },
+  levValue:     { color: Colors.navy, fontSize: Typography.base, fontWeight: Typography.bold },
+
+  // Input (compact margin card)
+  marginCard: {
+    gap: 8,
+    backgroundColor: Colors.bg.card,
+    borderRadius: Radius.md,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    paddingHorizontal: 16,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.bg.card,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    minHeight: 64,
+    overflow: 'hidden',
   },
   input: {
     flex: 1,
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#1F2937',
-    paddingVertical: 16,
+    fontSize: Typography.lg,
+    fontWeight: Typography.bold,
+    color: Colors.text.primary,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 0,
   },
   inputCurrency: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#6B7280',
+    paddingHorizontal: Spacing.lg,
+    borderLeftWidth: 1,
+    borderLeftColor: Colors.border,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
   },
-  hint: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    marginTop: 8,
+  currencyText: { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.steel },
+  hint:         { fontSize: Typography.xs, color: Colors.text.muted },
+  maxBtn: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg.subtle,
   },
-  leverageContainer: {
-    marginBottom: 24,
-    paddingHorizontal: 20,
-  },
-  sliderContainer: {
-    marginTop: 12,
-    marginBottom: 16,
-  },
+  maxBtnText: { fontSize: Typography.xs, color: Colors.text.secondary, fontWeight: Typography.semibold },
+
+  // Leverage slider
   sliderTrack: {
-    height: 6,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 3,
-    position: 'relative',
+    height: 30,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.bg.subtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+    justifyContent: 'center',
   },
   sliderFill: {
     position: 'absolute',
     left: 0,
     top: 0,
-    height: '100%',
-    backgroundColor: '#6C5CE7',
-    borderRadius: 3,
+    bottom: 0,
+    backgroundColor: '#2E4D6B',
   },
   sliderThumb: {
     position: 'absolute',
-    top: -7,
+    marginLeft: -10,
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: '#6C5CE7',
-    marginLeft: -10,
+    backgroundColor: Colors.navy,
+    borderWidth: 2,
+    borderColor: Colors.bg.screen,
   },
   sliderLabels: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 8,
+    alignItems: 'center',
   },
-  sliderLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  positionButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  positionButton: {
+
+  // Direction
+  directionRow: { flexDirection: 'row', gap: Spacing.sm },
+  directionBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 16,
-    borderRadius: 12,
-    borderWidth: 2,
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.bg.subtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  longButton: {
-    backgroundColor: '#10B981',
-    borderColor: '#10B981',
+  directionBtnLongActive: { backgroundColor: Colors.gainBg, borderColor: Colors.gain },
+  directionBtnShortActive: { backgroundColor: Colors.lossBg, borderColor: Colors.loss },
+  dirText: { fontSize: Typography.sm, fontWeight: Typography.bold, color: Colors.white },
+
+  // Summary
+  summaryCard: {
+    backgroundColor: Colors.bg.card,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.lg,
+    gap: 10,
+    ...Shadow.subtle,
   },
-  shortButton: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#EF4444',
-  },
-  positionButtonActive: {
-    opacity: 1,
-  },
-  positionButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  shortButtonText: {
-    color: '#EF4444',
-  },
-  longText: {
-    color: '#10B981',
-  },
-  shortText: {
-    color: '#EF4444',
-  },
-  warningCard: {
+  summaryTitle:    { fontSize: Typography.sm, fontWeight: Typography.bold, color: Colors.text.primary, marginBottom: 4 },
+  summaryRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  summaryLabel:    { fontSize: Typography.sm, color: Colors.text.muted },
+  summaryValue:    { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.text.primary },
+  highlightValue:  { color: Colors.gain },
+  summaryTotalRow: { marginTop: 4, paddingTop: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.divider },
+  totalLabel:      { fontSize: Typography.base, fontWeight: Typography.semibold, color: Colors.text.primary },
+  totalValue:      { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.navy },
+
+  // Risk notice
+  riskNotice: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 12,
-    marginHorizontal: 20,
-    marginBottom: 24,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: '#FEF3C7',
-  },
-  warningText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#92400E',
-    lineHeight: 18,
-  },
-  positionButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 8,
-  },
-  positionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
     gap: 8,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
-  },
-  longButton: {
-    borderColor: '#10B981',
-  },
-  shortButton: {
-    borderColor: '#E5E7EB',
-  },
-  positionButtonActive: {
-    backgroundColor: '#10B981',
-    borderColor: '#10B981',
-  },
-  positionButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  shortButtonText: {
-    color: '#EF4444',
-  },
-  longText: {
-    color: '#10B981',
-  },
-  shortText: {
-    color: '#EF4444',
-  },
-  summaryCard: {
-    marginHorizontal: 20,
-    marginTop: 16,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: '#F9FAFB',
+    padding: Spacing.md,
+    backgroundColor: Colors.bg.card,
+    borderRadius: Radius.md,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: Colors.border,
   },
-  summaryTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 12,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  summaryLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  summaryValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1F2937',
-  },
-  summaryLabelBold: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  summaryValueBold: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#6C5CE7',
-  },
-  summaryDivider: {
-    height: 1,
-    backgroundColor: '#E5E7EB',
-    marginVertical: 10,
-  },
-  executeButton: {
+  riskText: { flex: 1, fontSize: Typography.xs, color: Colors.steel, lineHeight: 18 },
+
+  // CTA
+  cta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    marginHorizontal: 20,
-    marginTop: 24,
-    marginBottom: 12,
-    padding: 18,
-    borderRadius: 12,
-    backgroundColor: '#6C5CE7',
+    padding: 16,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.navy,
+    ...Shadow.card,
   },
-  executeButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  ctaDisabled: { opacity: 0.4 },
+  ctaText:     { fontSize: Typography.base, fontWeight: Typography.bold, color: Colors.white },
+
+  flowHint: {
+    fontSize: Typography.xs,
+    color: Colors.text.muted,
+    textAlign: 'center',
+    marginTop: -Spacing.sm,
   },
 });

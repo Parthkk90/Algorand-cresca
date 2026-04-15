@@ -1,627 +1,591 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Animated,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { LineChart } from 'react-native-gifted-charts';
-import { priceService } from '../services/priceService';
-import pythOracleService from '../services/pythOracleService';
+import { ScreenContainer } from '../components/ScreenContainer';
+import { TxSkeletonRow } from '../components/SkeletonRow';
+import { Anim, Colors, Radius, Spacing, Typography } from '../constants/theme';
 
-interface CryptoAsset {
-  id: string;
-  name: string;
+type Asset = {
   symbol: string;
-  price: number;
-  change24h: number;
-  icon: string;
-  color: string;
-  confidence?: number;
-  lastUpdated?: number;
-  isStale?: boolean;
-}
-
-interface NFTAsset {
-  id: string;
   name: string;
-  collection: string;
-  floorPrice: number;
-  change24h: number;
-  volume24h: number;
-  imageUrl: string;
-  priceHistory: { value: number; label?: string }[];
+  price: number;
+  change: number;
+  marketCapRank: number;
+  ecosystem: 'EVM' | 'Non-EVM';
+  sectors: string[];
+};
+
+const FILTERS = ['All', 'EVM', 'Non-EVM', 'DeFi', 'Stablecoins'];
+const RATE_LIMIT_COOLDOWN_MS = 2 * 60 * 1000;
+
+type MarketMeta = {
+  symbol: string;
+  name: string;
+  ecosystem: 'EVM' | 'Non-EVM';
+  sectors: string[];
+};
+
+const MARKET_META: Record<string, MarketMeta> = {
+  algorand: { symbol: 'ALGO', name: 'Algorand', ecosystem: 'Non-EVM', sectors: ['L1'] },
+  'usd-coin': { symbol: 'USDC', name: 'USD Coin', ecosystem: 'EVM', sectors: ['Stablecoins'] },
+  tether: { symbol: 'USDT', name: 'Tether', ecosystem: 'EVM', sectors: ['Stablecoins'] },
+  bitcoin: { symbol: 'BTC', name: 'Bitcoin', ecosystem: 'Non-EVM', sectors: ['Store of Value'] },
+  ethereum: { symbol: 'ETH', name: 'Ethereum', ecosystem: 'EVM', sectors: ['L1'] },
+  solana: { symbol: 'SOL', name: 'Solana', ecosystem: 'Non-EVM', sectors: ['L1'] },
+  'avalanche-2': { symbol: 'AVAX', name: 'Avalanche', ecosystem: 'EVM', sectors: ['L1'] },
+  'binancecoin': { symbol: 'BNB', name: 'BNB', ecosystem: 'EVM', sectors: ['L1'] },
+  ripple: { symbol: 'XRP', name: 'XRP', ecosystem: 'Non-EVM', sectors: ['Payments'] },
+  cardano: { symbol: 'ADA', name: 'Cardano', ecosystem: 'Non-EVM', sectors: ['L1'] },
+  sui: { symbol: 'SUI', name: 'Sui', ecosystem: 'Non-EVM', sectors: ['L1'] },
+  aptos: { symbol: 'APT', name: 'Aptos', ecosystem: 'Non-EVM', sectors: ['L1'] },
+  near: { symbol: 'NEAR', name: 'NEAR', ecosystem: 'Non-EVM', sectors: ['L1'] },
+  'chainlink': { symbol: 'LINK', name: 'Chainlink', ecosystem: 'EVM', sectors: ['DeFi'] },
+  uniswap: { symbol: 'UNI', name: 'Uniswap', ecosystem: 'EVM', sectors: ['DeFi'] },
+  aave: { symbol: 'AAVE', name: 'Aave', ecosystem: 'EVM', sectors: ['DeFi'] },
+  'lido-dao': { symbol: 'LDO', name: 'Lido DAO', ecosystem: 'EVM', sectors: ['DeFi'] },
+  arbitrum: { symbol: 'ARB', name: 'Arbitrum', ecosystem: 'EVM', sectors: ['L2'] },
+  optimism: { symbol: 'OP', name: 'Optimism', ecosystem: 'EVM', sectors: ['L2'] },
+  'polygon-ecosystem-token': { symbol: 'POL', name: 'Polygon', ecosystem: 'EVM', sectors: ['L2'] },
+};
+
+const MARKET_IDS = Object.keys(MARKET_META);
+const SYMBOL_MAP: Record<string, string> = {
+  algorand: 'ALGO',
+  'usd-coin': 'USDC',
+  tether: 'USDT',
+  bitcoin: 'BTC',
+  ethereum: 'ETH',
+  solana: 'SOL',
+  'avalanche-2': 'AVAX',
+  binancecoin: 'BNB',
+  ripple: 'XRP',
+  cardano: 'ADA',
+  sui: 'SUI',
+  aptos: 'APT',
+  near: 'NEAR',
+  chainlink: 'LINK',
+  uniswap: 'UNI',
+  aave: 'AAVE',
+  'lido-dao': 'LDO',
+  arbitrum: 'ARB',
+  optimism: 'OP',
+  'polygon-ecosystem-token': 'POL',
+};
+
+const MARKETS_CACHE_KEY = 'cresca_markets_cache_v1';
+const MARKET_FALLBACK_ROWS: Asset[] = [
+  { symbol: 'ALGO', name: 'Algorand', price: 0.18, change: 0, marketCapRank: 0, ecosystem: 'Non-EVM', sectors: ['L1'] },
+  { symbol: 'BTC', name: 'Bitcoin', price: 70000, change: 0, marketCapRank: 0, ecosystem: 'Non-EVM', sectors: ['Store of Value'] },
+  { symbol: 'ETH', name: 'Ethereum', price: 3000, change: 0, marketCapRank: 0, ecosystem: 'EVM', sectors: ['L1'] },
+  { symbol: 'SOL', name: 'Solana', price: 100, change: 0, marketCapRank: 0, ecosystem: 'Non-EVM', sectors: ['L1'] },
+  { symbol: 'AVAX', name: 'Avalanche', price: 35, change: 0, marketCapRank: 0, ecosystem: 'EVM', sectors: ['L1'] },
+  { symbol: 'XRP', name: 'XRP', price: 0.6, change: 0, marketCapRank: 0, ecosystem: 'Non-EVM', sectors: ['Payments'] },
+  { symbol: 'ARB', name: 'Arbitrum', price: 1.1, change: 0, marketCapRank: 0, ecosystem: 'EVM', sectors: ['L2'] },
+  { symbol: 'LINK', name: 'Chainlink', price: 18, change: 0, marketCapRank: 0, ecosystem: 'EVM', sectors: ['DeFi'] },
+  { symbol: 'USDC', name: 'USD Coin', price: 1.0, change: 0, marketCapRank: 0, ecosystem: 'EVM', sectors: ['Stablecoins'] },
+];
+
+// Per-asset animated flash when price updates
+function usePriceFlash() {
+  const flash = useRef(new Animated.Value(0)).current;
+  const trigger = useCallback(() => {
+    flash.setValue(1);
+    Animated.timing(flash, {
+      toValue: 0,
+      duration: Anim.slow,
+      useNativeDriver: false,
+    }).start();
+  }, [flash]);
+  const bg = flash.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['transparent', Colors.gain + '22'],
+  });
+  return { trigger, bg };
 }
 
-export default function MarketsScreen() {
-  const router = useRouter();
-  const [assets, setAssets] = useState<CryptoAsset[]>([]);
-  const [nftAssets, setNftAssets] = useState<NFTAsset[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [sortBy, setSortBy] = useState<'alphabetical' | 'price' | 'change'>('alphabetical');
-  const [activeTab, setActiveTab] = useState<'tokens' | 'nfts'>('tokens');
+function AssetRow({ asset, isLast }: { asset: Asset; isLast: boolean }) {
+  const { trigger, bg } = usePriceFlash();
+  const prevPrice = useRef(asset.price);
 
   useEffect(() => {
-    loadMarketData();
-    
-    // Refresh every 10 seconds (Pyth updates ~400ms, so this is conservative)
-    const interval = setInterval(() => {
-      loadMarketData();
-    }, 10000);
-    
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadMarketData = async () => {
-    try {
-      setIsLoading(true);
-      
-      // ✅ REAL PRICES FROM PYTH NETWORK (Decentralized Oracle)
-      const prices = await pythOracleService.getPrices(['BTC', 'ETH', 'SOL', 'MOVE']);
-      
-      // Movement-deployed tokens with REAL Pyth prices
-      const marketData: CryptoAsset[] = [
-        {
-          id: 'MOVE',
-          name: 'Movement',
-          symbol: 'MOVE',
-          price: prices.MOVE?.price || 0.85,
-          change24h: 5.23, // TODO: Calculate from historical data
-          icon: 'M',
-          color: '#6C5CE7',
-          confidence: prices.MOVE?.confidence,
-          lastUpdated: prices.MOVE?.timestamp,
-          isStale: prices.MOVE?.isStale,
-        },
-        {
-          id: 'wMOVE',
-          name: 'Wrapped Movement',
-          symbol: 'WMOVE',
-          price: (prices.MOVE?.price || 0.85) * 0.99, // Wrapped version slightly lower
-          change24h: 5.15,
-          icon: 'W',
-          color: '#8B7FE8',
-        },
-        {
-          id: 'musd',
-          name: 'Movement USD',
-          symbol: 'mUSD',
-          price: 1.0,
-          change24h: 0.12,
-          icon: '$',
-          color: '#10B981',
-        },
-        {
-          id: 'mbtc',
-          name: 'Movement BTC',
-          symbol: 'mBTC',
-          price: prices.BTC?.price || 43500,
-          change24h: -2.1,
-          icon: '₿',
-          color: '#F7931A',
-          confidence: prices.BTC?.confidence,
-          lastUpdated: prices.BTC?.timestamp,
-          isStale: prices.BTC?.isStale,
-        },
-        {
-          id: 'meth',
-          name: 'Movement ETH',
-          symbol: 'mETH',
-          price: prices.ETH?.price || 2300,
-          change24h: -3.4,
-          icon: 'Ξ',
-          color: '#627EEA',
-          confidence: prices.ETH?.confidence,
-          lastUpdated: prices.ETH?.timestamp,
-          isStale: prices.ETH?.isStale,
-        },
-      ];
-      
-      console.log('✅ Markets loaded with Pyth prices:', marketData.map(a => `${a.symbol}: $${a.price.toFixed(2)}`).join(', '));
-      setAssets(marketData);
-
-      // Generate NFT price history data for charts
-      const generatePriceHistory = (basePrice: number) => {
-        const history = [];
-        const baseTime = Date.now();
-        for (let i = 23; i >= 0; i--) {
-          const timeVariation = Math.sin((baseTime / 5000) - i) * 0.1;
-          const value = basePrice * (1 + timeVariation);
-          history.push({ value, label: i === 0 ? 'Now' : `${i}h` });
-        }
-        return history;
-      };
-
-      // Movement NFT Collections with simulated floor prices
-      const variation = Math.random() * 0.2 - 0.1; // -10% to +10%
-      const nftData: NFTAsset[] = [
-        {
-          id: 'Movement-genesis',
-          name: 'Movement Genesis #1337',
-          collection: 'Movement Genesis',
-          floorPrice: 12.5 + (variation * 2), // 12.5 - 14.5 MOVE
-          change24h: 8.5 + (variation * 3),
-          volume24h: 1250 + (variation * 200),
-          imageUrl: '🎨',
-          priceHistory: generatePriceHistory(12.5),
-        },
-        {
-          id: 'Movement-punks',
-          name: 'Movement Punk #4242',
-          collection: 'Movement Punks',
-          floorPrice: 8.2 + (variation * 1.5), // 8.2 - 9.7 MOVE
-          change24h: -2.3 + (variation * 5),
-          volume24h: 890 + (variation * 150),
-          imageUrl: '👾',
-          priceHistory: generatePriceHistory(8.2),
-        },
-        {
-          id: 'Movement-apes',
-          name: 'Movement Ape #777',
-          collection: 'Bored Movement Apes',
-          floorPrice: 25.8 + (variation * 3), // 25.8 - 28.8 MOVE
-          change24h: 15.2 + (variation * 4),
-          volume24h: 2100 + (variation * 300),
-          imageUrl: '🦍',
-          priceHistory: generatePriceHistory(25.8),
-        },
-        {
-          id: 'Movement-ordinals',
-          name: 'Movement Ordinal #100',
-          collection: 'Movement Ordinals',
-          floorPrice: 5.5 + (variation * 1), // 5.5 - 6.5 MOVE
-          change24h: 3.8 + (variation * 2),
-          volume24h: 450 + (variation * 100),
-          imageUrl: '📜',
-          priceHistory: generatePriceHistory(5.5),
-        },
-        {
-          id: 'Movement-degens',
-          name: 'Movement Degen #5000',
-          collection: 'Movement Degens',
-          floorPrice: 18.3 + (variation * 2.5), // 18.3 - 20.8 MOVE
-          change24h: 12.1 + (variation * 3.5),
-          volume24h: 1680 + (variation * 250),
-          imageUrl: '🔥',
-          priceHistory: generatePriceHistory(18.3),
-        },
-      ];
-
-      setNftAssets(nftData);
-    } catch (error) {
-      console.error('Error loading market data:', error);
-    } finally {
-      setIsLoading(false);
+    if (prevPrice.current !== asset.price) {
+      trigger();
+      prevPrice.current = asset.price;
     }
+  }, [asset.price, trigger]);
+
+  const isUp = asset.change > 0;
+  const isDown = asset.change < 0;
+  const tagFor = (change: number) => {
+    if (Math.abs(change) < 0.5) return 'STABLE';
+    if (Math.abs(change) >= 3) return 'HIGH';
+    return 'MED';
   };
 
-  const sortedAssets = [...assets].sort((a, b) => {
-    switch (sortBy) {
-      case 'alphabetical':
-        return a.name.localeCompare(b.name);
-      case 'price':
-        return b.price - a.price;
-      case 'change':
-        return b.change24h - a.change24h;
-      default:
-        return 0;
-    }
-  });
-
-  const handleAssetPress = (asset: CryptoAsset) => {
-    router.push({
-      pathname: '/assetDetail',
-      params: {
-        id: asset.id,
-        name: asset.name,
-        symbol: asset.symbol,
-        price: asset.price.toString(),
-        change24h: asset.change24h.toString(),
-        icon: asset.icon,
-        color: asset.color,
-      },
-    });
-  };
-
-  const renderAsset = ({ item }: { item: CryptoAsset }) => (
-    <TouchableOpacity style={styles.assetCard} onPress={() => handleAssetPress(item)} activeOpacity={0.7}>
-      <View style={[styles.assetIcon, { backgroundColor: item.color }]}>
-        <Text style={styles.assetIconText}>{item.icon}</Text>
+  return (
+    <Animated.View
+      style={[
+        styles.assetRow,
+        isLast && styles.assetRowLast,
+        { backgroundColor: bg },
+      ]}
+      accessible
+      accessibilityRole="text"
+      accessibilityLabel={`${asset.name}, price $${asset.price.toLocaleString()}, ${asset.change > 0 ? 'up' : asset.change < 0 ? 'down' : 'flat'} ${Math.abs(asset.change).toFixed(1)} percent`}
+    >
+      <View>
+        <View style={styles.symbolRow}>
+          <Text style={styles.assetSymbol}>{asset.symbol}</Text>
+          <View style={styles.tagChip}>
+            <Text style={styles.tagText}>{tagFor(asset.change)}</Text>
+          </View>
+        </View>
+        <Text style={styles.assetName}>{asset.name} · #{asset.marketCapRank || '--'}</Text>
       </View>
-      
-      <View style={styles.assetInfo}>
-        <Text style={styles.assetName}>{item.name}</Text>
-        <Text style={styles.assetSymbol}>{item.symbol}</Text>
-      </View>
-      
-      <View style={styles.assetPriceContainer}>
-        <Text style={styles.assetPrice}>${item.price.toLocaleString()}</Text>
-        <View style={[
-          styles.changeBadge,
-          item.change24h >= 0 ? styles.changeBadgePositive : styles.changeBadgeNegative
-        ]}>
-          <Text style={[
-            styles.changeText,
-            item.change24h >= 0 ? styles.changeTextPositive : styles.changeTextNegative
-          ]}>
-            {item.change24h >= 0 ? '+' : ''}{item.change24h.toFixed(2)}%
+      <View style={styles.assetRight}>
+        <Text style={[styles.assetPrice, { fontVariant: ['tabular-nums'] }]}>
+          ${asset.price.toLocaleString(undefined, {
+            maximumFractionDigits: asset.price > 100 ? 2 : 4,
+          })}
+        </Text>
+        <View style={styles.changeRow}>
+          <Ionicons
+            name={isUp ? 'arrow-up' : isDown ? 'arrow-down' : 'remove'}
+            size={10}
+            color={isUp ? Colors.gain : isDown ? Colors.loss : Colors.text.muted}
+          />
+          <Text
+            style={[
+              styles.assetChange,
+              { fontVariant: ['tabular-nums'] },
+              isUp ? styles.up : isDown ? styles.down : styles.flat,
+            ]}
+          >
+            {Math.abs(asset.change).toFixed(1)}%
           </Text>
         </View>
       </View>
-      
-      <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-    </TouchableOpacity>
+    </Animated.View>
   );
+}
 
-  const renderNFT = ({ item }: { item: NFTAsset }) => (
-    <TouchableOpacity style={styles.nftCard} activeOpacity={0.7}>
-      <View style={styles.nftHeader}>
-        <View style={styles.nftIconContainer}>
-          <Text style={styles.nftIcon}>{item.imageUrl}</Text>
-        </View>
-        <View style={styles.nftInfo}>
-          <Text style={styles.nftName}>{item.name}</Text>
-          <Text style={styles.nftCollection}>{item.collection}</Text>
-        </View>
-      </View>
+export default function MarketsScreen() {
+  const [activeFilter, setActiveFilter] = useState('All');
+  const [query, setQuery] = useState('');
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const rateLimitUntilRef = useRef(0);
 
-      {/* Mini Price Chart */}
-      <View style={styles.nftChartContainer}>
-        <LineChart
-          data={item.priceHistory}
-          width={320}
-          height={80}
-          curved
-          hideDataPoints
-          hideRules
-          hideYAxisText
-          hideAxesAndRules
-          color={item.change24h >= 0 ? '#10B981' : '#EF4444'}
-          thickness={2}
-          startFillColor={item.change24h >= 0 ? '#10B981' : '#EF4444'}
-          endFillColor={item.change24h >= 0 ? '#D1FAE5' : '#FEE2E2'}
-          startOpacity={0.3}
-          endOpacity={0.1}
-          areaChart
-          yAxisOffset={item.floorPrice * 0.9}
-        />
-      </View>
+  // Stagger entrance
+  const listAnim = useRef(new Animated.Value(0)).current;
 
-      <View style={styles.nftFooter}>
-        <View style={styles.nftPriceInfo}>
-          <Text style={styles.nftPriceLabel}>Floor Price</Text>
-          <Text style={styles.nftPrice}>{item.floorPrice.toFixed(2)} MOVE</Text>
-        </View>
-        <View style={styles.nftStatsRow}>
-          <View style={[
-            styles.changeBadge,
-            item.change24h >= 0 ? styles.changeBadgePositive : styles.changeBadgeNegative
-          ]}>
-            <Text style={[
-              styles.changeText,
-              item.change24h >= 0 ? styles.changeTextPositive : styles.changeTextNegative
-            ]}>
-              {item.change24h >= 0 ? '+' : ''}{item.change24h.toFixed(2)}%
-            </Text>
-          </View>
-          <Text style={styles.nftVolume}>Vol: {item.volume24h.toFixed(0)} MOVE</Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
+  const loadMarkets = useCallback(async (isRefresh = false) => {
+    try {
+      if (isRefresh) {
+        setRefreshing(true);
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } else {
+        setLoading(true);
+      }
+      setError(null);
 
-  if (isLoading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6C5CE7" />
-      </View>
-    );
-  }
+      const now = Date.now();
+      if (now < rateLimitUntilRef.current) {
+        const cacheRaw = await AsyncStorage.getItem(MARKETS_CACHE_KEY);
+        const cached = cacheRaw ? (JSON.parse(cacheRaw) as Asset[]) : [];
+        if (cached.length > 0) {
+          setAssets(cached);
+          setError('Live market snapshot is rate-limited · showing cached data');
+          return;
+        }
+      }
+
+      const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${MARKET_IDS.join(',')}&price_change_percentage=24h`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        if (res.status === 429) {
+          rateLimitUntilRef.current = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+        }
+        throw new Error(`Market API ${res.status}`);
+      }
+
+      const data = await res.json();
+      const rows: Asset[] = (Array.isArray(data) ? data : [])
+        .map((item: any) => ({
+          symbol: SYMBOL_MAP[item.id] ?? String(item.symbol || '').toUpperCase(),
+          name: MARKET_META[item.id]?.name ?? String(item.name || item.id || 'Asset'),
+          price: Number(item.current_price ?? NaN),
+          change: Number(item.price_change_percentage_24h ?? 0),
+          marketCapRank: Number(item.market_cap_rank ?? 0),
+          ecosystem: MARKET_META[item.id]?.ecosystem ?? 'Non-EVM',
+          sectors: MARKET_META[item.id]?.sectors ?? [],
+        }))
+        .filter((row) => Number.isFinite(row.price));
+
+      setAssets(rows);
+      await AsyncStorage.setItem(MARKETS_CACHE_KEY, JSON.stringify(rows));
+
+      // Entrance fade on first load
+      if (!isRefresh) {
+        listAnim.setValue(0);
+        Animated.timing(listAnim, {
+          toValue: 1,
+          duration: Anim.normal,
+          useNativeDriver: true,
+        }).start();
+      }
+    } catch (err: any) {
+      const msg = err?.message ?? 'Could not load markets';
+      const cacheRaw = await AsyncStorage.getItem(MARKETS_CACHE_KEY);
+      const cached = cacheRaw ? (JSON.parse(cacheRaw) as Asset[]) : [];
+      const fallback = cached.length > 0 ? cached : MARKET_FALLBACK_ROWS;
+      setAssets(fallback);
+      if (msg.includes('429')) {
+        setError('Live market snapshot is rate-limited · showing cached data');
+      } else {
+        setError(`${msg} · showing cached data`);
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [listAnim]);
+
+  useEffect(() => {
+    void loadMarkets();
+  }, [loadMarkets]);
+
+  useEffect(() => {
+    const id = setInterval(() => void loadMarkets(true), 90000);
+    return () => clearInterval(id);
+  }, [loadMarkets]);
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return assets.filter((a) => {
+      const queryMatches =
+        q.length === 0 ||
+        a.symbol.toLowerCase().includes(q) ||
+        a.name.toLowerCase().includes(q);
+
+      if (!queryMatches) return false;
+      if (activeFilter === 'All') return true;
+      if (activeFilter === 'EVM') return a.ecosystem === 'EVM';
+      if (activeFilter === 'Non-EVM') return a.ecosystem === 'Non-EVM';
+      if (activeFilter === 'DeFi') return a.sectors.includes('DeFi');
+      if (activeFilter === 'Stablecoins') return a.sectors.includes('Stablecoins');
+      return true;
+    });
+  }, [query, assets, activeFilter]);
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <TouchableOpacity style={styles.sortButton}>
-            <Ionicons name="arrow-up" size={16} color="#6C5CE7" />
-            <Text style={styles.sortText}>Alphabet wise (a-z)</Text>
-            <Ionicons name="chevron-down" size={16} color="#6C5CE7" />
-          </TouchableOpacity>
-          
-          <View style={styles.headerIcons}>
-            <TouchableOpacity style={styles.iconButton}>
-              <Ionicons name="notifications-outline" size={24} color="#1F2937" />
+    <ScreenContainer style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Text style={styles.title}>Markets</Text>
+        <Text style={styles.subtitle}>Top collections and token movement across Algorand.</Text>
+
+        <View style={styles.searchWrap}>
+          <Ionicons name="search" size={16} color={Colors.text.muted} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search assets"
+            value={query}
+            onChangeText={setQuery}
+            placeholderTextColor={Colors.text.muted}
+            accessibilityLabel="Search assets"
+            returnKeyType="search"
+          />
+          {query.length > 0 && (
+            <TouchableOpacity
+              onPress={() => setQuery('')}
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+            >
+              <Ionicons name="close-circle" size={16} color={Colors.text.muted} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.iconButton}>
-              <Ionicons name="ellipsis-horizontal" size={24} color="#1F2937" />
+          )}
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filtersRow}
+        >
+          {FILTERS.map((f) => (
+            <TouchableOpacity
+              key={f}
+              style={[styles.filterChip, activeFilter === f && styles.filterChipActive]}
+              onPress={() => {
+                setActiveFilter(f);
+                void Haptics.selectionAsync();
+              }}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`Filter by ${f}`}
+              accessibilityState={{ selected: activeFilter === f }}
+            >
+              <Text style={[styles.filterText, activeFilter === f && styles.filterTextActive]}>
+                {f}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <View style={styles.tokensCard}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.sectionTitle}>Live Token Board</Text>
+            <TouchableOpacity
+              onPress={() => void loadMarkets(true)}
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Refresh market data"
+            >
+              <View style={styles.refreshBtn}>
+                <Ionicons
+                  name="refresh"
+                  size={14}
+                  color={refreshing ? Colors.text.muted : Colors.tertiary}
+                  style={refreshing ? styles.spinning : undefined}
+                />
+                <Text style={[styles.sectionHint, refreshing && styles.sectionHintMuted]}>
+                  {refreshing ? 'Updating…' : 'Refresh'}
+                </Text>
+              </View>
             </TouchableOpacity>
           </View>
-        </View>
 
-        {/* Tab Switcher */}
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'tokens' && styles.tabActive]}
-            onPress={() => setActiveTab('tokens')}
-          >
-            <Ionicons 
-              name="logo-bitcoin" 
-              size={18} 
-              color={activeTab === 'tokens' ? '#6C5CE7' : '#9CA3AF'} 
-            />
-            <Text style={[styles.tabText, activeTab === 'tokens' && styles.tabTextActive]}>
-              Tokens
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'nfts' && styles.tabActive]}
-            onPress={() => setActiveTab('nfts')}
-          >
-            <Ionicons 
-              name="images" 
-              size={18} 
-              color={activeTab === 'nfts' ? '#6C5CE7' : '#9CA3AF'} 
-            />
-            <Text style={[styles.tabText, activeTab === 'nfts' && styles.tabTextActive]}>
-              NFTs
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+          {/* Skeleton loading */}
+          {loading && (
+            <View style={styles.skeletonWrap}>
+              <TxSkeletonRow />
+              <TxSkeletonRow />
+              <TxSkeletonRow />
+              <TxSkeletonRow />
+              <TxSkeletonRow />
+            </View>
+          )}
 
-      {/* Asset List */}
-      {activeTab === 'tokens' ? (
-        <FlatList
-          data={sortedAssets}
-          renderItem={renderAsset}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContainer}
-          showsVerticalScrollIndicator={false}
-        />
-      ) : (
-        <FlatList
-          data={nftAssets}
-          renderItem={renderNFT}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContainer}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
-    </SafeAreaView>
+          {/* Error state */}
+          {!loading && error && shown.length === 0 && (
+            <View style={styles.errorCard}>
+              <Ionicons name="cloud-offline-outline" size={28} color={Colors.loss} />
+              <Text style={styles.errorTitle}>Could not load markets</Text>
+              <Text style={styles.errorDetail}>{error}</Text>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                onPress={() => void loadMarkets()}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading markets"
+              >
+                <Ionicons name="refresh" size={14} color={Colors.bg.screen} />
+                <Text style={styles.retryText}>Try Again</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {!loading && error && shown.length > 0 && (
+            <View style={styles.warningRow}>
+              <Ionicons name="warning-outline" size={14} color={Colors.loss} />
+              <Text style={styles.warningText}>{error}</Text>
+            </View>
+          )}
+
+          {/* Empty state */}
+          {!loading && shown.length === 0 && (
+            <View style={styles.emptyState}>
+              <Ionicons name="search-outline" size={28} color={Colors.text.muted} />
+              <Text style={styles.emptyText}>No assets match "{query}"</Text>
+            </View>
+          )}
+
+          {/* Asset list */}
+          {!loading && shown.length > 0 && (
+            <Animated.View style={{ opacity: listAnim }}>
+              {shown.map((asset, index) => (
+                <AssetRow key={asset.symbol} asset={asset} isLast={index === shown.length - 1} />
+              ))}
+            </Animated.View>
+          )}
+        </View>
+      </ScrollView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
+  container: { flex: 1, backgroundColor: Colors.bg.screen },
+  content: { padding: Spacing.xl, paddingBottom: 44 },
+  title: {
+    fontSize: Typography.xxl,
+    color: Colors.text.primary,
+    fontWeight: '700',
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
+  subtitle: {
+    marginTop: 6,
+    fontSize: Typography.sm,
+    color: Colors.text.muted,
+    marginBottom: Spacing.md,
+  },
+  searchWrap: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: Colors.bg.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    marginBottom: Spacing.md,
+    gap: 8,
   },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 16,
-    backgroundColor: '#FFFFFF',
+  searchInput: {
+    flex: 1,
+    color: Colors.text.primary,
+    fontSize: Typography.sm,
   },
-  headerTop: {
+  filtersRow: { gap: 8, paddingBottom: Spacing.md },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.bg.subtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  filterChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  filterText: {
+    color: Colors.text.muted,
+    fontSize: Typography.xs,
+    fontWeight: '600',
+  },
+  filterTextActive: { color: Colors.bg.screen },
+  rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: Spacing.sm,
   },
-  sortButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: '#F9FAFB',
-  },
-  sortText: {
-    fontSize: 14,
-    color: '#6C5CE7',
-    fontWeight: '500',
-  },
-  headerIcons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  listContainer: {
-    padding: 16,
-  },
-  assetCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    marginBottom: 8,
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  assetIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  assetIconText: {
-    fontSize: 20,
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  assetInfo: {
-    flex: 1,
-  },
-  assetName: {
-    fontSize: 16,
+  sectionTitle: {
+    color: Colors.text.primary,
+    fontSize: Typography.base,
     fontWeight: '600',
-    color: '#1F2937',
-    marginBottom: 2,
   },
+  refreshBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  sectionHint: { color: Colors.tertiary, fontSize: Typography.xs },
+  sectionHintMuted: { color: Colors.text.muted },
+  spinning: { opacity: 0.5 },
+  tokensCard: {
+    backgroundColor: Colors.bg.card,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.lg,
+  },
+  skeletonWrap: { gap: 4 },
+  assetRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+    borderRadius: Radius.sm,
+    paddingHorizontal: 4,
+    marginHorizontal: -4,
+  },
+  assetRowLast: { borderBottomWidth: 0 },
+  symbolRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   assetSymbol: {
-    fontSize: 13,
-    color: '#9CA3AF',
-  },
-  assetPriceContainer: {
-    alignItems: 'flex-end',
-    marginRight: 12,
-  },
-  assetPrice: {
-    fontSize: 16,
+    color: Colors.text.primary,
+    fontSize: Typography.sm,
     fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 4,
   },
-  changeBadge: {
+  tagChip: {
+    backgroundColor: Colors.bg.subtle,
+    borderRadius: Radius.full,
     paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 4,
   },
-  changeBadgePositive: {
-    backgroundColor: '#D1FAE5',
-  },
-  changeBadgeNegative: {
-    backgroundColor: '#FEE2E2',
-  },
-  changeText: {
-    fontSize: 12,
+  tagText: { color: Colors.text.muted, fontSize: 10, fontWeight: '600' },
+  assetName: { color: Colors.text.muted, fontSize: Typography.xs, marginTop: 2 },
+  assetRight: { alignItems: 'flex-end' },
+  assetPrice: {
+    color: Colors.text.primary,
+    fontSize: Typography.sm,
     fontWeight: '600',
   },
-  changeTextPositive: {
-    color: '#10B981',
+  changeRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  assetChange: { fontSize: Typography.xs, fontWeight: '600' },
+  up: { color: Colors.gain },
+  down: { color: Colors.loss },
+  flat: { color: Colors.text.muted },
+  errorCard: {
+    alignItems: 'center',
+    paddingVertical: Spacing.xl,
+    gap: Spacing.sm,
   },
-  changeTextNegative: {
-    color: '#EF4444',
+  errorTitle: {
+    color: Colors.text.primary,
+    fontSize: Typography.base,
+    fontWeight: '600',
   },
-  tabContainer: {
-    flexDirection: 'row',
-    marginTop: 16,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    padding: 4,
+  errorDetail: {
+    color: Colors.text.muted,
+    fontSize: Typography.xs,
+    textAlign: 'center',
   },
-  tab: {
-    flex: 1,
+  retryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.lg,
     paddingVertical: 10,
-    borderRadius: 8,
-    gap: 6,
+    borderRadius: Radius.full,
+    marginTop: 4,
   },
-  tabActive: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  tabText: {
-    fontSize: 14,
+  retryText: {
+    color: Colors.bg.screen,
+    fontSize: Typography.sm,
     fontWeight: '600',
-    color: '#9CA3AF',
   },
-  tabTextActive: {
-    color: '#6C5CE7',
-  },
-  nftCard: {
-    padding: 16,
-    marginBottom: 12,
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  nftHeader: {
+  warningRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
-  },
-  nftIconContainer: {
-    width: 50,
-    height: 50,
-    borderRadius: 12,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  nftIcon: {
-    fontSize: 28,
-  },
-  nftInfo: {
-    flex: 1,
-  },
-  nftName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 2,
-  },
-  nftCollection: {
-    fontSize: 13,
-    color: '#6B7280',
-    fontWeight: '500',
-  },
-  nftChartContainer: {
-    marginVertical: 12,
-    marginLeft: -16,
-    overflow: 'hidden',
-  },
-  nftFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    marginTop: 8,
-  },
-  nftPriceInfo: {
-    flex: 1,
-  },
-  nftPriceLabel: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    marginBottom: 4,
-  },
-  nftPrice: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  nftStatsRow: {
-    alignItems: 'flex-end',
     gap: 6,
+    backgroundColor: Colors.bg.subtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 8,
+    marginBottom: Spacing.sm,
   },
-  nftVolume: {
-    fontSize: 11,
-    color: '#6B7280',
-    fontWeight: '500',
+  warningText: {
+    flex: 1,
+    color: Colors.text.muted,
+    fontSize: Typography.xs,
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: Spacing.xl,
+    gap: Spacing.sm,
+  },
+  emptyText: {
+    color: Colors.text.muted,
+    fontSize: Typography.sm,
   },
 });

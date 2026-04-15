@@ -1,41 +1,119 @@
+// app/_layout.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React from 'react';
-import { Platform } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Platform, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-get-random-values';
 import '../utils/globalPolyfills';
+import { Colors } from '../constants/theme';
+import { notificationService } from '../services/notificationService';
+import { onboardingEmitter } from '../utils/onboardingEmitter';
+import { appPasswordService } from '../services/appPasswordService';
+import { authEmitter } from '../utils/authEmitter';
+
+const ONBOARDING_DONE_KEY = 'cresca_onboarding_completed';
 
 export default function TabLayout() {
+  const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(true);
+  const [isOnboarded, setIsOnboarded] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(true);
+
+  useEffect(() => {
+    void notificationService.requestPermissions();
+    return () => {};
+  }, []);
+
+  // One-shot read on mount; thereafter driven by emitter — no polling
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      const val = await AsyncStorage.getItem(ONBOARDING_DONE_KEY);
+      if (!mounted) return;
+
+      const onboarded = val === '1';
+      setIsOnboarded(onboarded);
+
+      if (!onboarded) {
+        setIsUnlocked(true);
+      } else {
+        const hasPassword = await appPasswordService.hasPassword();
+        const unlocked = !hasPassword || appPasswordService.isSessionUnlocked();
+        setIsUnlocked(unlocked);
+      }
+
+      setIsCheckingOnboarding(false);
+    })();
+
+    const unsub = onboardingEmitter.subscribe(() => {
+      if (mounted) setIsOnboarded(true);
+    });
+
+    const unsubAuth = authEmitter.subscribe((unlocked) => {
+      if (mounted) setIsUnlocked(unlocked);
+    });
+
+    return () => {
+      mounted = false;
+      unsub();
+      unsubAuth();
+    };
+  }, []);
+
+  const guardTabPress = (e: any) => {
+    if (!isOnboarded || !isUnlocked) e.preventDefault();
+  };
+
+  if (isCheckingOnboarding) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: Colors.bg.screen,
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
+
+  const tabBarStyle = Platform.select({
+    ios: {
+      position: 'absolute' as const,
+      backgroundColor: 'rgba(23,31,51,0.92)',
+      borderTopWidth: 0.5,
+      borderTopColor: Colors.border,
+      paddingBottom: 20,
+      height: 85,
+      shadowColor: Colors.primary,
+      shadowOffset: { width: 0, height: -4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 16,
+    },
+    default: {
+      backgroundColor: Colors.bg.card,
+      borderTopWidth: 0.5,
+      borderTopColor: Colors.border,
+      height: 70,
+      elevation: 12,
+    },
+  });
+
   return (
-    <>
-      <StatusBar style="dark" />
+    <SafeAreaProvider>
+      <StatusBar style="light" translucent={false} backgroundColor={Colors.bg.screen} />
       <Tabs
         screenOptions={{
-          tabBarActiveTintColor: '#6C5CE7',
-          tabBarInactiveTintColor: '#9CA3AF',
+          tabBarActiveTintColor: Colors.primary,
+          tabBarInactiveTintColor: Colors.text.muted,
           headerShown: false,
-          tabBarStyle: Platform.select({
-            ios: {
-              position: 'absolute',
-              backgroundColor: '#FFFFFF',
-              borderTopWidth: 1,
-              borderTopColor: '#F3F4F6',
-              paddingBottom: 20,
-              height: 85,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: -2 },
-              shadowOpacity: 0.05,
-              shadowRadius: 8,
-            },
-            default: {
-              backgroundColor: '#FFFFFF',
-              borderTopWidth: 1,
-              borderTopColor: '#F3F4F6',
-              height: 70,
-              elevation: 8,
-            },
-          }),
+          tabBarStyle: isOnboarded && isUnlocked ? tabBarStyle : { display: 'none' },
+          tabBarLabelStyle: { fontSize: 11, fontWeight: '500' },
         }}
       >
         <Tabs.Screen
@@ -49,6 +127,7 @@ export default function TabLayout() {
         />
         <Tabs.Screen
           name="markets"
+          listeners={{ tabPress: guardTabPress }}
           options={{
             title: 'Markets',
             tabBarIcon: ({ color, focused }) => (
@@ -58,15 +137,17 @@ export default function TabLayout() {
         />
         <Tabs.Screen
           name="bucket"
+          listeners={{ tabPress: guardTabPress }}
           options={{
             title: 'Bundles',
             tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'flash' : 'flash-outline'} color={color} size={32} style={{ marginTop: -4 }} />
+              <Ionicons name={focused ? 'flash' : 'flash-outline'} color={color} size={24} />
             ),
           }}
         />
         <Tabs.Screen
           name="calendar"
+          listeners={{ tabPress: guardTabPress }}
           options={{
             title: 'Schedule',
             tabBarIcon: ({ color, focused }) => (
@@ -76,40 +157,19 @@ export default function TabLayout() {
         />
         <Tabs.Screen
           name="payments"
+          listeners={{ tabPress: guardTabPress }}
           options={{
-            title: 'Profile',
+            title: 'Settings',
             tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'person' : 'person-outline'} color={color} size={24} />
+              <Ionicons name={focused ? 'person' : 'person-outline'} color={color} size={22} />
             ),
           }}
         />
-        
-        {/* Hidden screens - not in tab bar */}
-        <Tabs.Screen
-          name="bundlesList"
-          options={{
-            href: null, // This hides it from the tab bar
-          }}
-        />
-        <Tabs.Screen
-          name="bundleTrade"
-          options={{
-            href: null, // This hides it from the tab bar
-          }}
-        />
-        <Tabs.Screen
-          name="assetDetail"
-          options={{
-            href: null, // This hides it from the tab bar
-          }}
-        />
-        <Tabs.Screen
-          name="swap"
-          options={{
-            href: null, // This hides it from the tab bar
-          }}
-        />
+        <Tabs.Screen name="bundlesList" options={{ href: null }} />
+        <Tabs.Screen name="bundleTrade" options={{ href: null }} />
+        <Tabs.Screen name="assetDetail" options={{ href: null }} />
+        <Tabs.Screen name="swap" options={{ href: null }} />
       </Tabs>
-    </>
+    </SafeAreaProvider>
   );
 }

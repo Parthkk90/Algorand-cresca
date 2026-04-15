@@ -1,253 +1,342 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useState } from 'react';
+import * as Clipboard from 'expo-clipboard';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { web3Service } from '../services/web3Service';
+import { AppNoticeModal, AppNoticeTone } from '../components/AppNoticeModal';
+import { ScreenContainer } from '../components/ScreenContainer';
+import { Colors, Radius, Spacing, Typography } from '../constants/theme';
+import { algorandService } from '../services/algorandService';
 
-interface MenuItem {
-  icon: keyof typeof Ionicons.glyphMap;
+type ProfileSetting = {
+  key: 'wallet' | 'security' | 'notifications' | 'network' | 'support' | 'swap';
   title: string;
-  description: string;
-  onPress: () => void;
-}
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+};
 
-export default function ProfileScreen() {
-  const [walletAddress, setWalletAddress] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+const PROFILE_SETTINGS: ProfileSetting[] = [
+  {
+    key: 'wallet',
+    title: 'Wallet Settings',
+    subtitle: 'Manage address, backups, and wallet preferences',
+    icon: 'wallet-outline',
+  },
+  {
+    key: 'security',
+    title: 'Security And Privacy',
+    subtitle: 'Password lock, session security, and privacy controls',
+    icon: 'lock-closed-outline',
+  },
+  {
+    key: 'notifications',
+    title: 'Notifications',
+    subtitle: 'Transaction and market alert preferences',
+    icon: 'notifications-outline',
+  },
+  {
+    key: 'network',
+    title: 'Network Settings',
+    subtitle: 'Testnet mode and explorer preferences',
+    icon: 'globe-outline',
+  },
+  {
+    key: 'support',
+    title: 'Help And Support',
+    subtitle: 'FAQs, troubleshooting, and contact support',
+    icon: 'help-circle-outline',
+  },
+  {
+    key: 'swap',
+    title: 'Swap',
+    subtitle: 'Open token swap and conversion flow',
+    icon: 'swap-horizontal-outline',
+  },
+];
+
+export default function PaymentsScreen() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [address, setAddress] = useState('');
+  const [balance, setBalance] = useState('0.000000');
+  const [notice, setNotice] = useState<{ title: string; message: string; tone: AppNoticeTone } | null>(null);
+
+  const shortAddress = useMemo(() => {
+    if (!address) return '...';
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  }, [address]);
 
   useEffect(() => {
-    initializeWallet();
+    (async () => {
+      try {
+        const wallet = await algorandService.initializeWallet();
+        const bal = await algorandService.getBalance();
+        setAddress(wallet.address);
+        setBalance(bal.algo);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  const initializeWallet = async () => {
-    try {
-      const walletData = await web3Service.initializeWallet();
-      setWalletAddress(walletData.address);
-    } catch (error) {
-      console.error('Error initializing wallet:', error);
-    } finally {
-      setIsLoading(false);
+  const onSettingPress = (key: ProfileSetting['key']) => {
+    if (key === 'swap') {
+      router.push('/swap');
+      return;
     }
+
+    if (key === 'wallet') {
+      setNotice({
+        title: 'Wallet Settings',
+        message: 'Wallet controls will be expanded in this section.',
+        tone: 'info',
+      });
+      return;
+    }
+
+    if (key === 'security') {
+      setNotice({
+        title: 'Security And Privacy',
+        message: 'Security controls will be expanded in this section.',
+        tone: 'info',
+      });
+      return;
+    }
+
+    if (key === 'notifications') {
+      setNotice({
+        title: 'Notifications',
+        message: 'Notification controls will be expanded in this section.',
+        tone: 'info',
+      });
+      return;
+    }
+
+    if (key === 'network') {
+      setNotice({
+        title: 'Network Settings',
+        message: 'Network controls will be expanded in this section.',
+        tone: 'info',
+      });
+      return;
+    }
+
+    setNotice({
+      title: 'Help And Support',
+      message: 'Support options will be expanded in this section.',
+      tone: 'info',
+    });
   };
 
-  const menuItems: MenuItem[] = [
-    {
-      icon: 'settings-outline',
-      title: 'Wallet Settings',
-      description: 'Manage your wallet preferences',
-      onPress: () => Alert.alert('Wallet Settings', 'Coming soon...'),
-    },
-    {
-      icon: 'shield-checkmark-outline',
-      title: 'Security & Privacy',
-      description: 'Control your security settings',
-      onPress: () => Alert.alert('Security & Privacy', 'Coming soon...'),
-    },
-    {
-      icon: 'notifications-outline',
-      title: 'Notifications',
-      description: 'Manage notification preferences',
-      onPress: () => Alert.alert('Notifications', 'Coming soon...'),
-    },
-    {
-      icon: 'globe-outline',
-      title: 'Network Settings',
-      description: 'Switch between networks',
-      onPress: () => Alert.alert('Network Settings', 'Monad Testnet (Active)'),
-    },
-    {
-      icon: 'help-circle-outline',
-      title: 'Help & Support',
-      description: 'Get help and support',
-      onPress: () => Alert.alert('Help & Support', 'Coming soon...'),
-    },
-  ];
-
-  const formatAddress = (address: string) => {
-    if (!address) return '';
-    return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+  const copyAddress = async () => {
+    if (!address) return;
+    await Clipboard.setStringAsync(address);
+    setNotice({
+      title: 'Copied',
+      message: 'Wallet address copied to clipboard.',
+      tone: 'success',
+    });
   };
 
-  if (isLoading) {
+  if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6C5CE7" />
+      <View style={styles.loaderWrap}>
+        <ActivityIndicator size="large" color={Colors.navy} />
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Profile Header */}
-        <View style={styles.profileHeader}>
-          <View style={styles.avatarContainer}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>A</Text>
-            </View>
-            <View style={styles.onlineIndicator} />
+    <ScreenContainer style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.title}>Profile</Text>
+            <Text style={styles.subtitle}>Account and settings</Text>
           </View>
-          <Text style={styles.userName}>Aditya</Text>
-          <Text style={styles.walletAddress}>{formatAddress(walletAddress)}</Text>
+          <TouchableOpacity
+            style={styles.editBtn}
+            onPress={() =>
+              setNotice({
+                title: 'Edit Profile',
+                message: 'Profile editing will be added here.',
+                tone: 'info',
+              })
+            }
+          >
+            <Ionicons name="pencil" size={16} color={Colors.navy} />
+          </TouchableOpacity>
         </View>
 
-        {/* Menu Items */}
-        <View style={styles.menuContainer}>
-          {menuItems.map((item, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.menuItem}
-              onPress={item.onPress}
-            >
-              <View style={styles.menuIconContainer}>
-                <Ionicons name={item.icon} size={24} color="#6C5CE7" />
-              </View>
-              <View style={styles.menuTextContainer}>
-                <Text style={styles.menuTitle}>{item.title}</Text>
-                <Text style={styles.menuDescription}>{item.description}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-            </TouchableOpacity>
-          ))}
+        <View style={styles.profileCard}>
+          <View style={styles.avatarWrap}>
+            <Text style={styles.avatarText}>C</Text>
+            <View style={styles.onlineDot} />
+          </View>
+          <Text style={styles.profileName}>Cresca User</Text>
+
+          <TouchableOpacity style={styles.addressPill} onPress={copyAddress} activeOpacity={0.85}>
+            <Ionicons name="copy-outline" size={14} color={Colors.steel} />
+            <Text style={styles.addressPillText}>{shortAddress}</Text>
+          </TouchableOpacity>
+
+          <Text style={[styles.profileBalance, { fontVariant: ['tabular-nums'] }]}>{parseFloat(balance).toFixed(4)} ALGO</Text>
         </View>
 
-        {/* Version Info */}
-        <View style={styles.versionContainer}>
-          <Text style={styles.versionText}>Riga Wallet v1.0.0</Text>
-          <Text style={styles.networkText}>Monad Testnet</Text>
+        <View style={styles.settingsCard}>
+          {PROFILE_SETTINGS.map((item, index) => {
+            const isLast = index === PROFILE_SETTINGS.length - 1;
+            return (
+              <TouchableOpacity
+                key={item.key}
+                style={isLast ? styles.settingsRowLast : styles.settingsRow}
+                onPress={() => onSettingPress(item.key)}
+                activeOpacity={0.85}
+              >
+                <View style={styles.settingsLeft}>
+                  <View style={styles.settingsIconWrap}>
+                    <Ionicons name={item.icon} size={17} color={Colors.navy} />
+                  </View>
+                  <View style={styles.settingsTextWrap}>
+                    <Text style={styles.settingsRowTitle}>{item.title}</Text>
+                    <Text style={styles.settingsRowSub}>{item.subtitle}</Text>
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={Colors.steel} />
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </ScrollView>
-    </SafeAreaView>
+
+      <AppNoticeModal
+        visible={!!notice}
+        title={notice?.title ?? ''}
+        message={notice?.message ?? ''}
+        tone={notice?.tone ?? 'info'}
+        onClose={() => setNotice(null)}
+      />
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
+  container: { flex: 1, backgroundColor: Colors.cream },
+  loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.cream },
+  content: { padding: Spacing.xl, paddingBottom: 40 },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
   },
-  loadingContainer: {
-    flex: 1,
+  title: { color: Colors.navy, fontSize: Typography.xl, fontWeight: Typography.bold },
+  subtitle: { color: Colors.steel, fontSize: Typography.sm, marginTop: 3 },
+  editBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg.subtle,
+    alignItems: 'center',
     justifyContent: 'center',
+  },
+  profileCard: {
+    backgroundColor: Colors.white,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
+    padding: Spacing.xl,
+    marginBottom: Spacing.md,
   },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-  },
-  profileHeader: {
+  avatarWrap: {
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    backgroundColor: Colors.bg.subtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
     alignItems: 'center',
-    paddingVertical: 40,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 3,
-  },
-  avatarContainer: {
+    justifyContent: 'center',
     position: 'relative',
-    marginBottom: 16,
   },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#6C5CE7',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  onlineIndicator: {
+  avatarText: { color: Colors.navy, fontSize: Typography.lg, fontWeight: Typography.bold },
+  onlineDot: {
     position: 'absolute',
-    bottom: 2,
-    right: 2,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#10B981',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
+    bottom: 3,
+    right: 3,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: Colors.white,
+    backgroundColor: Colors.gain,
   },
-  userName: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1F2937',
-    marginBottom: 4,
+  profileName: {
+    color: Colors.navy,
+    fontSize: Typography.base,
+    fontWeight: Typography.semibold,
+    marginTop: Spacing.sm,
   },
-  walletAddress: {
-    fontSize: 14,
-    color: '#6B7280',
-    fontFamily: 'monospace',
-  },
-  menuContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 3,
-  },
-  menuItem: {
+  addressPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
+    gap: 6,
+    backgroundColor: Colors.bg.subtle,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginTop: Spacing.sm,
+  },
+  addressPillText: { color: Colors.steel, fontSize: Typography.xs, fontWeight: Typography.semibold },
+  profileBalance: {
+    color: Colors.navy,
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    marginTop: Spacing.sm,
+  },
+  settingsCard: {
+    backgroundColor: Colors.white,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.lg,
+  },
+  settingsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: Colors.divider,
   },
-  menuIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#EDE9FE',
+  settingsRowLast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
+  },
+  settingsLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  settingsIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.bg.subtle,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
   },
-  menuTextContainer: {
-    flex: 1,
-  },
-  menuTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginBottom: 2,
-  },
-  menuDescription: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  versionContainer: {
-    alignItems: 'center',
-    paddingVertical: 30,
-  },
-  versionText: {
-    fontSize: 14,
-    color: '#9CA3AF',
-    marginBottom: 4,
-  },
-  networkText: {
-    fontSize: 12,
-    color: '#10B981',
-    fontWeight: '600',
-  },
+  settingsTextWrap: { flex: 1 },
+  settingsRowTitle: { color: Colors.navy, fontSize: Typography.sm, fontWeight: Typography.semibold },
+  settingsRowSub: { color: Colors.steel, fontSize: Typography.xs, marginTop: 2 },
 });
