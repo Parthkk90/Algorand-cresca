@@ -26,7 +26,10 @@
       "favicon": "./assets/images/cresca-logo-mark.png"
     },
     "updates": {
-      "fallbackToCacheTimeout": 0
+      "enabled": false,
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "useEmbeddedUpdate": true
     },
     "plugins": [
       "expo-router",
