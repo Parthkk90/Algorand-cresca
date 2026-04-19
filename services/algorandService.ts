@@ -120,9 +120,9 @@ export interface AlgorandTransaction {
 
 // Maps Cresca contract app IDs to human-readable transaction labels.
 const CRESCA_APP_LABELS: Record<number, string> = {
-  758836614: 'Payment',
-  758836616: 'Scheduled Payment',
-  758836627: 'Bundle Trade',
+  758849047: 'Payment',
+  758849049: 'Scheduled Payment',
+  758849061: 'Bundle Trade',
 };
 
 export class AlgorandService {
@@ -456,6 +456,25 @@ export class AlgorandService {
       return [];
     }
 
+    const extractInnerPayment = (tx: any): { receiver: string; amount: number } | null => {
+      const innerTxns = Array.isArray(tx?.['inner-txns']) ? tx['inner-txns'] : [];
+
+      for (const inner of innerTxns) {
+        const innerPay = inner?.['payment-transaction'];
+        if (innerPay?.receiver && Number(innerPay?.amount ?? 0) > 0) {
+          return {
+            receiver: String(innerPay.receiver),
+            amount: Number(innerPay.amount),
+          };
+        }
+
+        const nested = extractInnerPayment(inner);
+        if (nested) return nested;
+      }
+
+      return null;
+    };
+
     const fetchForType = async (txType: 'pay' | 'appl'): Promise<AlgorandTransaction[]> => {
       const response = await indexer
         .lookupAccountTransactions(addr)
@@ -466,14 +485,15 @@ export class AlgorandService {
       return (response.transactions ?? []).map((tx: any): AlgorandTransaction => {
         const pay   = tx['payment-transaction'];
         const appl  = tx['application-transaction'];
+        const innerPay = extractInnerPayment(tx);
         const isSent = tx['sender'] === addr;
         const appId  = appl?.['application-id'] as number | undefined;
 
         return {
           txId:      tx.id,
           sender:    tx['sender'],
-          receiver:  pay?.receiver ?? '',
-          amount:    pay?.amount ?? 0,
+          receiver:  pay?.receiver ?? innerPay?.receiver ?? '',
+          amount:    Number(pay?.amount ?? innerPay?.amount ?? 0),
           timestamp: tx['round-time'] ?? 0,
           note:      tx['note']
             ? new TextDecoder().decode(Buffer.from(tx['note'], 'base64'))
@@ -492,9 +512,15 @@ export class AlgorandService {
       // Run a query per type (Indexer does not support OR on tx-type)
       const results = await Promise.all(txTypes.map(fetchForType));
 
+      const deduped = new Map<string, AlgorandTransaction>();
+      for (const tx of results.flat()) {
+        if (!deduped.has(tx.txId)) {
+          deduped.set(tx.txId, tx);
+        }
+      }
+
       // Merge, sort by timestamp descending, trim to limit
-      return results
-        .flat()
+      return [...deduped.values()]
         .sort((a, b) => b.timestamp - a.timestamp)
         .slice(0, limit);
     } catch (err) {

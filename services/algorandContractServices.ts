@@ -25,9 +25,9 @@ import { algorandService, AlgorandService, MICROALGO_PER_ALGO } from './algorand
 // ---------------------------------------------------------------------------
 
 export const CONTRACT_APP_IDS = {
-  CrescaPayments: 758836614,
-  CrescaCalendarPayments: 758836616,
-  CrescaBucketProtocol: 758836627,
+  CrescaPayments: 758849047,
+  CrescaCalendarPayments: 758849049,
+  CrescaBucketProtocol: 758849061,
 } as const;
 
 // ---------------------------------------------------------------------------
