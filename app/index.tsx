@@ -31,7 +31,6 @@ import { getBasket } from '../constants/baskets';
 import { Anim, Colors, Radius, Shadow, Spacing, Typography } from '../constants/theme';
 import { algorandService, AlgorandTransaction } from '../services/algorandService';
 import { positionStore } from '../services/positionStore';
-import { onboardingEmitter } from '../utils/onboardingEmitter';
 import { appPasswordService } from '../services/appPasswordService';
 
 type QuickAction = {
@@ -71,11 +70,8 @@ const QUICK_ACTIONS: QuickAction[] = [
   { title: 'Swap', icon: 'swap-horizontal', action: 'swap' },
 ];
 
-const ONBOARDING_DONE_KEY = 'cresca_onboarding_completed';
 const HOME_MARKETS_CACHE_KEY = 'home_market_snapshot_cache_v1';
 const HOME_MARKETS_RATE_LIMIT_MS = 120_000;
-type OnboardingStep = 'welcome' | 'create-password' | 'seed-phrase' | 'verify-phrase' | 'recover';
-type PasswordSetupMode = 'new-wallet' | 'password-only';
 
 const CRESCA_LOGO_MARK = require('../assets/images/cresca-logo-mark.png');
 const CRESCA_LOGO_WORDMARK = require('../assets/images/cresca-logo-wordmark.png');
@@ -86,17 +82,6 @@ export default function HomeScreen() {
   const { width, height } = useWindowDimensions();
   const [isLoading, setIsLoading] = useState(true);
   const [introVisible, setIntroVisible] = useState(true);
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('welcome');
-  const [passwordSetupMode, setPasswordSetupMode] = useState<PasswordSetupMode>('new-wallet');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [acceptedPasswordRisk, setAcceptedPasswordRisk] = useState(false);
-  const [seedWords, setSeedWords] = useState<string[]>([]);
-  const [verifyPool, setVerifyPool] = useState<string[]>([]);
-  const [verifySelected, setVerifySelected] = useState<string[]>([]);
-  const [recoveryPhrase, setRecoveryPhrase] = useState('');
-  const [onboardingBusy, setOnboardingBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [address, setAddress] = useState('');
   const [balance, setBalance] = useState('0.000000');
@@ -154,15 +139,6 @@ export default function HomeScreen() {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   }, [address]);
 
-  const passwordChecks = useMemo(() => {
-    const hasLength = password.length >= 8;
-    const hasSymbol = /[^A-Za-z0-9]/.test(password);
-    const hasNumber = /\d/.test(password);
-    const hasUpper = /[A-Z]/.test(password);
-    const score = [hasLength, hasSymbol, hasNumber, hasUpper].filter(Boolean).length;
-    return { hasLength, hasSymbol, hasNumber, hasUpper, score };
-  }, [password]);
-
   const activityHistory = useMemo<HomeActivityRow[]>(() => {
     const transfers: HomeActivityRow[] = txHistory
       .filter((tx) => {
@@ -208,7 +184,7 @@ export default function HomeScreen() {
     try {
       setTxLoading(true);
       const [txs, positions] = await Promise.all([
-        algorandService.getTransactionHistory(addr, 10),
+        algorandService.getTransactionHistory(addr, 20, ['pay', 'appl']),
         positionStore.getAll(),
       ]);
 
@@ -377,33 +353,15 @@ export default function HomeScreen() {
 
     (async () => {
       try {
-        const onboardingDone = await AsyncStorage.getItem(ONBOARDING_DONE_KEY);
-        if (onboardingDone === '1') {
-          const hasPassword = await appPasswordService.hasPassword();
+        const hasPassword = await appPasswordService.hasPassword();
 
-          if (hasPassword && !appPasswordService.isSessionUnlocked()) {
-            setShowUnlock(true);
-            setShowOnboarding(false);
-            setIsLoading(false);
-            return;
-          }
-
-          if (!hasPassword) {
-            setPasswordSetupMode('password-only');
-            setOnboardingStep('create-password');
-            setShowOnboarding(true);
-            setIsLoading(false);
-            return;
-          }
-
-          await load();
-          setShowUnlock(false);
-          setShowOnboarding(false);
-        } else {
-          setPasswordSetupMode('new-wallet');
-          setOnboardingStep('welcome');
-          setShowOnboarding(true);
+        if (hasPassword && !appPasswordService.isSessionUnlocked()) {
+          setShowUnlock(true);
+          return;
         }
+
+        await load();
+        setShowUnlock(false);
       } finally {
         setIsLoading(false);
       }
@@ -425,18 +383,18 @@ export default function HomeScreen() {
   };
 
   useEffect(() => {
-    if (showOnboarding || isLoading || introVisible) return;
+    if (isLoading || introVisible || showUnlock) return;
 
     const id = setInterval(() => {
       void refreshLiveData();
     }, 30000);
 
     return () => clearInterval(id);
-  }, [showOnboarding, isLoading, introVisible]);
+  }, [isLoading, introVisible, showUnlock]);
 
   // Stagger entrance animation — fires once data is ready
   useEffect(() => {
-    if (isLoading || showOnboarding || introVisible) return;
+    if (isLoading || introVisible || showUnlock) return;
 
     const makeAnim = (opacity: Animated.Value, slide: Animated.Value, delay: number) =>
       Animated.parallel([
@@ -461,115 +419,7 @@ export default function HomeScreen() {
       makeAnim(actionsAnim,  actionsSlide,  80),
       makeAnim(marketAnim,   marketSlide,   160),
     ]).start();
-  }, [isLoading, showOnboarding, introVisible]);
-
-  const completeOnboarding = async () => {
-    await AsyncStorage.setItem(ONBOARDING_DONE_KEY, '1');
-    onboardingEmitter.emit();
-    await load();
-    setShowOnboarding(false);
-  };
-
-  const onCreateAccount = async () => {
-    setPasswordSetupMode('new-wallet');
-    setPassword('');
-    setConfirmPassword('');
-    setAcceptedPasswordRisk(false);
-    setOnboardingStep('create-password');
-  };
-
-  const onContinueCreatePassword = async () => {
-    if (password !== confirmPassword) {
-      showNotice('Passwords Do Not Match', 'Please ensure both password fields match.', 'error');
-      return;
-    }
-
-    if (passwordChecks.score < 3) {
-      showNotice('Weak Password', 'Use at least 8 chars with a symbol, number, and uppercase letter.', 'error');
-      return;
-    }
-
-    if (!acceptedPasswordRisk) {
-      showNotice('Confirmation Required', 'Please confirm that you understand password recovery limitations.', 'error');
-      return;
-    }
-
-    try {
-      setOnboardingBusy(true);
-
-      await appPasswordService.setPassword(password);
-
-      if (passwordSetupMode === 'password-only') {
-        await load();
-        setShowOnboarding(false);
-        setPassword('');
-        setConfirmPassword('');
-        setAcceptedPasswordRisk(false);
-        return;
-      }
-
-      await algorandService.initializeWallet();
-      const mnemonic = await algorandService.exportMnemonic();
-      const words = mnemonic.trim().split(/\s+/);
-      const shuffled = [...words].sort(() => Math.random() - 0.5);
-
-      setSeedWords(words);
-      setVerifyPool(shuffled);
-      setVerifySelected([]);
-      setOnboardingStep('seed-phrase');
-    } catch (err: any) {
-      showNotice('Create Account Failed', err?.message ?? 'Please try again.', 'error');
-    } finally {
-      setOnboardingBusy(false);
-    }
-  };
-
-  const onCopySeedPhrase = async () => {
-    if (!seedWords.length) return;
-    await Clipboard.setStringAsync(seedWords.join(' '));
-    showNotice('Copied', 'Recovery phrase copied to clipboard. Store it securely.', 'success');
-  };
-
-  const onPickVerifyWord = (word: string, index: number) => {
-    const key = `${word}-${index}`;
-    if (verifySelected.includes(key)) return;
-    setVerifySelected((prev) => [...prev, key]);
-  };
-
-  const onSubmitVerifyPhrase = async () => {
-    const pickedWords = verifySelected.map((entry) => entry.split('-')[0]);
-    const matches = pickedWords.join(' ') === seedWords.join(' ');
-
-    if (!matches) {
-      showNotice('Phrase Mismatch', 'The selected order does not match your recovery phrase.', 'error');
-      return;
-    }
-
-    try {
-      setOnboardingBusy(true);
-      await completeOnboarding();
-    } finally {
-      setOnboardingBusy(false);
-    }
-  };
-
-  const onRecoverAccount = async () => {
-    if (!recoveryPhrase.trim()) {
-      showNotice('Recovery Phrase Required', 'Enter your 25-word mnemonic phrase.', 'error');
-      return;
-    }
-
-    try {
-      setOnboardingBusy(true);
-      await algorandService.importFromMnemonic(recoveryPhrase.trim());
-      await completeOnboarding();
-      setRecoveryPhrase('');
-    } catch (err: any) {
-      showNotice('Recover Account Failed', err?.message ?? 'Please verify the mnemonic and try again.', 'error');
-    } finally {
-      setOnboardingBusy(false);
-    }
-  };
+  }, [isLoading, introVisible, showUnlock]);
 
   const onUnlockApp = async () => {
     if (!unlockPassword) {
@@ -665,210 +515,6 @@ export default function HomeScreen() {
       <View style={styles.loaderWrap}>
         <ActivityIndicator size="large" color={Colors.navy} />
       </View>
-    );
-  }
-
-  if (showOnboarding) {
-    const selectedWords = verifySelected.map((entry) => entry.split('-')[0]);
-
-    return (
-      <ScreenContainer style={styles.obsWrap}>
-        <ScrollView contentContainerStyle={styles.obsContent} showsVerticalScrollIndicator={false}>
-          <View style={styles.obsHeader}>
-            {onboardingStep !== 'welcome' ? (
-              <TouchableOpacity style={styles.obsIconBtn} onPress={() => setOnboardingStep('welcome')}>
-                <Ionicons name="arrow-back" size={20} color={Colors.obsidian.primary} />
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.obsIconSpacer} />
-            )}
-            <Image source={CRESCA_LOGO_WORDMARK} style={styles.obsBrandLogo} resizeMode="contain" />
-            <View style={styles.obsIconSpacer} />
-          </View>
-
-          {onboardingStep === 'welcome' ? (
-            <View style={styles.obsSection}>
-              <Text style={styles.obsTitle}>Secure your wallet</Text>
-              <Text style={styles.obsSubtitle}>Create a new account or recover your existing account to continue.</Text>
-
-              <TouchableOpacity style={styles.obsPrimaryBtn} onPress={onCreateAccount}>
-                <Text style={styles.obsPrimaryText}>Create Account</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.obsGhostBtn} onPress={() => setOnboardingStep('recover')}>
-                <Text style={styles.obsGhostText}>Recover Account</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {onboardingStep === 'create-password' ? (
-            <View style={styles.obsSection}>
-              <Text style={styles.obsTitle}>Create password</Text>
-              <Text style={styles.obsSubtitle}>This password unlocks your wallet on this device only.</Text>
-
-              <View style={styles.obsCard}>
-                <Text style={styles.obsLabel}>New Password</Text>
-                <TextInput
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                  autoComplete="new-password"
-                  textContentType="newPassword"
-                  importantForAutofill="yes"
-                  placeholder="••••••••"
-                  placeholderTextColor={Colors.obsidian.outline}
-                  style={styles.obsInput}
-                />
-
-                <Text style={[styles.obsLabel, styles.obsLabelTop]}>Confirm Password</Text>
-                <TextInput
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry
-                  autoComplete="new-password"
-                  textContentType="newPassword"
-                  importantForAutofill="yes"
-                  placeholder="••••••••"
-                  placeholderTextColor={Colors.obsidian.outline}
-                  style={styles.obsInput}
-                />
-
-                <View style={styles.obsStrengthRow}>
-                  {[0, 1, 2, 3].map((i) => (
-                    <View
-                      key={`strength-${i}`}
-                      style={[styles.obsStrengthBar, i < passwordChecks.score ? styles.obsStrengthBarActive : null]}
-                    />
-                  ))}
-                </View>
-
-                <View style={styles.obsChecklistGrid}>
-                  <View style={styles.obsCheckItem}><Text style={styles.obsCheckText}>{passwordChecks.hasLength ? '✓' : '○'} 8+ characters</Text></View>
-                  <View style={styles.obsCheckItem}><Text style={styles.obsCheckText}>{passwordChecks.hasSymbol ? '✓' : '○'} One symbol</Text></View>
-                  <View style={styles.obsCheckItem}><Text style={styles.obsCheckText}>{passwordChecks.hasNumber ? '✓' : '○'} One number</Text></View>
-                  <View style={styles.obsCheckItem}><Text style={styles.obsCheckText}>{passwordChecks.hasUpper ? '✓' : '○'} Uppercase</Text></View>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={styles.obsRiskRow}
-                onPress={() => setAcceptedPasswordRisk((v) => !v)}
-                activeOpacity={0.85}
-              >
-                <Ionicons name={acceptedPasswordRisk ? 'checkbox' : 'square-outline'} size={18} color={Colors.obsidian.primary} />
-                <Text style={styles.obsRiskText}>I understand CRESCA cannot recover this password.</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.obsPrimaryBtn, onboardingBusy && styles.disabledBtn]}
-                onPress={onContinueCreatePassword}
-                disabled={onboardingBusy}
-              >
-                <Text style={styles.obsPrimaryText}>{onboardingBusy ? 'Preparing...' : 'Continue'}</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {onboardingStep === 'seed-phrase' ? (
-            <View style={styles.obsSection}>
-              <Text style={styles.obsTitle}>Secret recovery phrase</Text>
-              <Text style={styles.obsSubtitle}>Write these words down and store them securely.</Text>
-
-              <View style={styles.obsWordsGrid}>
-                {seedWords.map((word, index) => (
-                  <View key={`seed-${index}`} style={styles.obsWordCard}>
-                    <Text style={styles.obsWordIndex}>{String(index + 1).padStart(2, '0')}</Text>
-                    <Text style={styles.obsWordText}>{word}</Text>
-                  </View>
-                ))}
-              </View>
-
-              <View style={styles.obsWarningCard}>
-                <Text style={styles.obsWarningTitle}>Never share your keys</Text>
-                <Text style={styles.obsWarningText}>Anyone with these words can access your wallet and funds.</Text>
-              </View>
-
-              <TouchableOpacity style={styles.obsPrimaryBtn} onPress={() => setOnboardingStep('verify-phrase')}>
-                <Text style={styles.obsPrimaryText}>I Saved It</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.obsGhostBtn} onPress={onCopySeedPhrase}>
-                <Text style={styles.obsGhostText}>Copy To Clipboard</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {onboardingStep === 'verify-phrase' ? (
-            <View style={styles.obsSection}>
-              <Text style={styles.obsTitle}>Verify phrase</Text>
-              <Text style={styles.obsSubtitle}>Tap words in the exact order to continue.</Text>
-
-              <View style={styles.obsSelectedBox}>
-                <View style={styles.obsSelectedWrap}>
-                  {selectedWords.map((word, index) => (
-                    <View key={`picked-${index}`} style={styles.obsSelectedChip}>
-                      <Text style={styles.obsSelectedIndex}>{index + 1}</Text>
-                      <Text style={styles.obsSelectedText}>{word}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.obsPoolGrid}>
-                {verifyPool.map((word, index) => {
-                  const key = `${word}-${index}`;
-                  const used = verifySelected.includes(key);
-                  return (
-                    <TouchableOpacity
-                      key={key}
-                      style={[styles.obsPoolWord, used && styles.obsPoolWordUsed]}
-                      onPress={() => onPickVerifyWord(word, index)}
-                      disabled={used}
-                    >
-                      <Text style={[styles.obsPoolText, used && styles.obsPoolTextUsed]}>{word}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              <TouchableOpacity
-                style={[styles.obsPrimaryBtn, onboardingBusy && styles.disabledBtn]}
-                onPress={onSubmitVerifyPhrase}
-                disabled={onboardingBusy || verifySelected.length !== seedWords.length}
-              >
-                <Text style={styles.obsPrimaryText}>{onboardingBusy ? 'Verifying...' : 'Submit Seed Phrase'}</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {onboardingStep === 'recover' ? (
-            <View style={styles.obsSection}>
-              <Text style={styles.obsTitle}>Recover wallet</Text>
-              <Text style={styles.obsSubtitle}>Paste your 25-word phrase to restore access.</Text>
-
-              <View style={styles.obsCard}>
-                <Text style={styles.obsLabel}>Recovery Phrase</Text>
-                <TextInput
-                  value={recoveryPhrase}
-                  onChangeText={setRecoveryPhrase}
-                  placeholder="word1 word2 ... word25"
-                  placeholderTextColor={Colors.obsidian.outline}
-                  multiline
-                  style={styles.obsRecoveryInput}
-                  autoCapitalize="none"
-                />
-              </View>
-
-              <TouchableOpacity
-                style={[styles.obsPrimaryBtn, onboardingBusy && styles.disabledBtn]}
-                onPress={onRecoverAccount}
-                disabled={onboardingBusy}
-              >
-                <Text style={styles.obsPrimaryText}>{onboardingBusy ? 'Recovering...' : 'Recover And Continue'}</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-        </ScrollView>
-      </ScreenContainer>
     );
   }
 
@@ -1340,14 +986,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: Spacing.xl,
   },
-  obsIconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.obsidian.surface,
-  },
   obsIconSpacer: { width: 34, height: 34 },
   obsBrandLogo: { width: 128, height: 34 },
   obsSection: { paddingBottom: 20 },
@@ -1367,7 +1005,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  obsLabelTop: { marginTop: Spacing.md },
   obsInput: {
     marginTop: 8,
     backgroundColor: Colors.obsidian.background,
@@ -1379,21 +1016,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.obsidian.outline,
     fontSize: Typography.md,
   },
-  obsStrengthRow: { flexDirection: 'row', gap: 6, marginTop: Spacing.md },
-  obsStrengthBar: { height: 6, flex: 1, borderRadius: 4, backgroundColor: Colors.obsidian.surfaceHigh },
-  obsStrengthBarActive: { backgroundColor: Colors.obsidian.tertiary },
-  obsChecklistGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: Spacing.md },
-  obsCheckItem: {
-    backgroundColor: Colors.obsidian.surface,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: Colors.obsidian.outline,
-  },
-  obsCheckText: { color: Colors.obsidian.textMuted, fontSize: Typography.xs, fontWeight: Typography.medium },
-  obsRiskRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginTop: Spacing.md, marginBottom: Spacing.md },
-  obsRiskText: { color: Colors.obsidian.textMuted, fontSize: Typography.xs, flex: 1 },
   obsPrimaryBtn: {
     backgroundColor: Colors.obsidian.primary,
     borderRadius: 20,
@@ -1402,85 +1024,6 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
   },
   obsPrimaryText: { color: Colors.obsidian.background, fontSize: Typography.base, fontWeight: Typography.bold },
-  obsGhostBtn: {
-    marginTop: Spacing.sm,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.obsidian.outline,
-    backgroundColor: Colors.obsidian.surface,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  obsGhostText: { color: Colors.obsidian.text, fontSize: Typography.sm, fontWeight: Typography.semibold },
-  obsWordsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  obsWordCard: {
-    width: '48%',
-    backgroundColor: Colors.obsidian.surfaceLow,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.obsidian.outline,
-    padding: 12,
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  obsWordIndex: { color: Colors.obsidian.primary, fontSize: Typography.xs, width: 20 },
-  obsWordText: { color: Colors.obsidian.text, fontSize: Typography.sm, fontWeight: Typography.semibold },
-  obsWarningCard: {
-    marginTop: Spacing.md,
-    backgroundColor: Colors.obsidian.warningContainer,
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.obsidian.warning,
-    borderRadius: 12,
-    padding: Spacing.md,
-  },
-  obsWarningTitle: { color: Colors.obsidian.warning, fontSize: Typography.sm, fontWeight: Typography.bold, textTransform: 'uppercase' },
-  obsWarningText: { color: Colors.obsidian.warning, fontSize: Typography.xs, marginTop: 4 },
-  obsSelectedBox: {
-    minHeight: 120,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.obsidian.outline,
-    backgroundColor: Colors.obsidian.surfaceLow,
-    padding: Spacing.md,
-  },
-  obsSelectedWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  obsSelectedChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: Colors.primaryContainer,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  obsSelectedIndex: { color: Colors.obsidian.primary, fontSize: 10, fontWeight: Typography.bold },
-  obsSelectedText: { color: Colors.obsidian.text, fontSize: Typography.xs, fontWeight: Typography.semibold },
-  obsPoolGrid: { marginTop: Spacing.md, flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  obsPoolWord: {
-    backgroundColor: Colors.obsidian.surface,
-    borderWidth: 1,
-    borderColor: Colors.obsidian.outline,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  obsPoolWordUsed: { opacity: 0.35 },
-  obsPoolText: { color: Colors.obsidian.text, fontSize: Typography.xs, fontWeight: Typography.medium },
-  obsPoolTextUsed: { textDecorationLine: 'line-through' },
-  obsRecoveryInput: {
-    marginTop: 8,
-    minHeight: 110,
-    textAlignVertical: 'top',
-    backgroundColor: Colors.obsidian.background,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.obsidian.outline,
-    color: Colors.obsidian.text,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 10,
-    fontSize: Typography.sm,
-  },
   disabledBtn: { opacity: 0.6 },
   unlockContent: { flex: 1, justifyContent: 'center' },
   unlockError: {

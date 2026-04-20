@@ -1,10 +1,13 @@
 // app/_layout.tsx
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, View } from 'react-native';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-get-random-values';
 import '../utils/globalPolyfills';
@@ -17,6 +20,9 @@ import { authEmitter } from '../utils/authEmitter';
 const ONBOARDING_DONE_KEY = 'cresca_onboarding_completed';
 
 export default function TabLayout() {
+  const router = useRouter();
+  const segments = useSegments();
+  const [queryClient] = useState(() => new QueryClient());
   const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(true);
   const [isOnboarded, setIsOnboarded] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(true);
@@ -67,6 +73,20 @@ export default function TabLayout() {
     if (!isOnboarded || !isUnlocked) e.preventDefault();
   };
 
+  useEffect(() => {
+    if (isCheckingOnboarding) return;
+
+    const inOnboarding = segments[0] === 'onboarding';
+    if (!isOnboarded && !inOnboarding) {
+      router.replace('/onboarding');
+      return;
+    }
+
+    if (isOnboarded && inOnboarding) {
+      router.replace('/index');
+    }
+  }, [isCheckingOnboarding, isOnboarded, router, segments]);
+
   if (isCheckingOnboarding) {
     return (
       <View
@@ -105,71 +125,78 @@ export default function TabLayout() {
   });
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style="light" translucent={false} backgroundColor={Colors.bg.screen} />
-      <Tabs
-        screenOptions={{
-          tabBarActiveTintColor: Colors.primary,
-          tabBarInactiveTintColor: Colors.text.muted,
-          headerShown: false,
-          tabBarStyle: isOnboarded && isUnlocked ? tabBarStyle : { display: 'none' },
-          tabBarLabelStyle: { fontSize: 11, fontWeight: '500' },
-        }}
-      >
-        <Tabs.Screen
-          name="index"
-          options={{
-            title: 'Home',
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'home' : 'home-outline'} color={color} size={24} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="markets"
-          listeners={{ tabPress: guardTabPress }}
-          options={{
-            title: 'Markets',
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'trending-up' : 'trending-up-outline'} color={color} size={24} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="bucket"
-          listeners={{ tabPress: guardTabPress }}
-          options={{
-            title: 'Bundles',
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'flash' : 'flash-outline'} color={color} size={24} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="calendar"
-          listeners={{ tabPress: guardTabPress }}
-          options={{
-            title: 'Schedule',
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'calendar' : 'calendar-outline'} color={color} size={24} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="payments"
-          listeners={{ tabPress: guardTabPress }}
-          options={{
-            title: 'Settings',
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'person' : 'person-outline'} color={color} size={22} />
-            ),
-          }}
-        />
-        <Tabs.Screen name="bundlesList" options={{ href: null }} />
-        <Tabs.Screen name="bundleTrade" options={{ href: null }} />
-        <Tabs.Screen name="assetDetail" options={{ href: null }} />
-        <Tabs.Screen name="swap" options={{ href: null }} />
-      </Tabs>
-    </SafeAreaProvider>
+    <QueryClientProvider client={queryClient}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <BottomSheetModalProvider>
+          <SafeAreaProvider>
+            <StatusBar style="light" translucent={false} backgroundColor={Colors.bg.screen} />
+            <Tabs
+              screenOptions={{
+                tabBarActiveTintColor: Colors.primary,
+                tabBarInactiveTintColor: Colors.text.muted,
+                headerShown: false,
+                tabBarStyle: isOnboarded && isUnlocked ? tabBarStyle : { display: 'none' },
+                tabBarLabelStyle: { fontSize: 11, fontWeight: '500' },
+              }}
+            >
+              <Tabs.Screen
+                name="index"
+                options={{
+                  title: 'Home',
+                  tabBarIcon: ({ color, focused }) => (
+                    <Ionicons name={focused ? 'home' : 'home-outline'} color={color} size={24} />
+                  ),
+                }}
+              />
+              <Tabs.Screen
+                name="markets"
+                listeners={{ tabPress: guardTabPress }}
+                options={{
+                  title: 'Markets',
+                  tabBarIcon: ({ color, focused }) => (
+                    <Ionicons name={focused ? 'trending-up' : 'trending-up-outline'} color={color} size={24} />
+                  ),
+                }}
+              />
+              <Tabs.Screen
+                name="bucket"
+                listeners={{ tabPress: guardTabPress }}
+                options={{
+                  title: 'Bundles',
+                  tabBarIcon: ({ color, focused }) => (
+                    <Ionicons name={focused ? 'flash' : 'flash-outline'} color={color} size={24} />
+                  ),
+                }}
+              />
+              <Tabs.Screen
+                name="calendar"
+                listeners={{ tabPress: guardTabPress }}
+                options={{
+                  title: 'Schedule',
+                  tabBarIcon: ({ color, focused }) => (
+                    <Ionicons name={focused ? 'calendar' : 'calendar-outline'} color={color} size={24} />
+                  ),
+                }}
+              />
+              <Tabs.Screen
+                name="payments"
+                listeners={{ tabPress: guardTabPress }}
+                options={{
+                  title: 'Settings',
+                  tabBarIcon: ({ color, focused }) => (
+                    <Ionicons name={focused ? 'person' : 'person-outline'} color={color} size={22} />
+                  ),
+                }}
+              />
+              <Tabs.Screen name="bundlesList" options={{ href: null }} />
+              <Tabs.Screen name="bundleTrade" options={{ href: null }} />
+              <Tabs.Screen name="assetDetail" options={{ href: null }} />
+              <Tabs.Screen name="swap" options={{ href: null }} />
+              <Tabs.Screen name="onboarding" options={{ href: null }} />
+            </Tabs>
+          </SafeAreaProvider>
+        </BottomSheetModalProvider>
+      </GestureHandlerRootView>
+    </QueryClientProvider>
   );
 }
