@@ -1,748 +1,1066 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import { BottomSheetModal } from "@gorhom/bottom-sheet";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Animated,
-    Easing,
-    Linking,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-} from 'react-native';
-import { AppNoticeAction, AppNoticeModal, AppNoticeTone } from '../components/AppNoticeModal';
-import { ScreenContainer } from '../components/ScreenContainer';
-import { Colors, Typography, Spacing, Radius, Shadow } from '../constants/theme';
-import { algorandService } from '../services/algorandService';
-import { dartRouterService, SwapQuote } from '../services/dartRouterService';
-import { pythOracleService } from '../services/pythOracleService';
-import { SYNTHETIC_ASA_IDS } from '../constants/baskets';
-import { StoredSwapAsset, swapPortfolioStore } from '../services/swapPortfolioStore';
+  ActivityIndicator,
+  FlatList,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { ScreenContainer } from "../components/ScreenContainer";
+import { SYNTHETIC_ASA_IDS } from "../constants/baskets";
+import { algorandService } from "../services/algorandService";
+import { dartRouterService, SwapQuote } from "../services/dartRouterService";
+import { pythOracleService } from "../services/pythOracleService";
+import { StoredSwapAsset, swapPortfolioStore } from "../services/swapPortfolioStore";
+import {
+  AssetChip,
+  CrescaSheet,
+  CrescaInput,
+  HeaderBar,
+  LiveBadge,
+  PrimaryButton,
+} from "../src/components/ui";
+import { C, H_PAD, R, T } from "../src/theme";
 
-// ---------------------------------------------------------------------------
-// Token definitions — Algorand testnet ASAs supported in the swap UI
-// ---------------------------------------------------------------------------
+const DART_APP_ID = 758849063;
 
-interface Token {
-  symbol:   string;
-  name:     string;
-  icon:     keyof typeof Ionicons.glyphMap;
-  color:    string;
-  asaId:    number;
+type SwapState =
+  | "idle"
+  | "quoting"
+  | "routing"
+  | "awaiting_sign"
+  | "broadcasting"
+  | "confirmed"
+  | "failed";
+
+type Token = {
+  symbol: string;
+  name: string;
+  networkColor: string;
+  asaId: number;
   decimals: number;
-}
+};
 
-const AVAILABLE_TOKENS: Token[] = [
-  { symbol: 'ALGO', name: 'Algorand',  icon: 'logo-electron', color: Colors.obsidian.primary, asaId: 0,        decimals: 6 },
-  { symbol: 'TST',  name: 'Cresca Test Asset', icon: 'flask-outline', color: Colors.obsidian.primary, asaId: 758849338, decimals: 6 },
-  { symbol: 'USDC', name: 'USD Coin',  icon: 'cash',          color: Colors.obsidian.tertiary, asaId: 10458941, decimals: 6 },
-  { symbol: 'BTC',  name: 'Bitcoin',   icon: 'logo-bitcoin',  color: Colors.obsidian.primary,  asaId: SYNTHETIC_ASA_IDS.BTC,  decimals: 6 },
-  { symbol: 'ETH',  name: 'Ethereum',  icon: 'diamond-outline', color: Colors.obsidian.tertiary, asaId: SYNTHETIC_ASA_IDS.ETH, decimals: 6 },
-  { symbol: 'SOL',  name: 'Solana',    icon: 'flash-outline', color: Colors.obsidian.tertiary, asaId: SYNTHETIC_ASA_IDS.SOL, decimals: 6 },
-  { symbol: 'ADA',  name: 'Cardano',   icon: 'pulse-outline', color: Colors.obsidian.tertiary, asaId: SYNTHETIC_ASA_IDS.ADA, decimals: 6 },
-  { symbol: 'XRP',  name: 'XRP',       icon: 'swap-horizontal-outline', color: Colors.obsidian.primary, asaId: SYNTHETIC_ASA_IDS.XRP, decimals: 6 },
-  { symbol: 'SUI',  name: 'Sui',       icon: 'layers-outline', color: Colors.obsidian.tertiary, asaId: SYNTHETIC_ASA_IDS.SUI, decimals: 6 },
-  { symbol: 'APT',  name: 'Aptos',     icon: 'git-network-outline', color: Colors.obsidian.tertiary, asaId: SYNTHETIC_ASA_IDS.APT, decimals: 6 },
-  { symbol: 'NEAR', name: 'Near',      icon: 'planet-outline', color: Colors.obsidian.primary, asaId: SYNTHETIC_ASA_IDS.NEAR, decimals: 6 },
-  { symbol: 'AVAX', name: 'Avalanche', icon: 'flame-outline', color: Colors.obsidian.tertiary, asaId: SYNTHETIC_ASA_IDS.AVAX, decimals: 6 },
-  { symbol: 'MOVE', name: 'Movement',  icon: 'trending-up-outline', color: Colors.obsidian.tertiary, asaId: SYNTHETIC_ASA_IDS.MOVE, decimals: 6 },
+const TOKENS: Token[] = [
+  {
+    symbol: "ALGO",
+    name: "Algorand",
+    networkColor: C.networks.algorand,
+    asaId: 0,
+    decimals: 6,
+  },
+  {
+    symbol: "TST",
+    name: "Cresca Test Asset",
+    networkColor: C.brand.teal,
+    asaId: 758849338,
+    decimals: 6,
+  },
+  {
+    symbol: "USDC",
+    name: "USD Coin",
+    networkColor: C.networks.ethereum,
+    asaId: SYNTHETIC_ASA_IDS.USDC,
+    decimals: 6,
+  },
+  {
+    symbol: "BTC",
+    name: "Bitcoin",
+    networkColor: C.networks.bitcoin,
+    asaId: SYNTHETIC_ASA_IDS.BTC,
+    decimals: 6,
+  },
+  {
+    symbol: "ETH",
+    name: "Ethereum",
+    networkColor: C.networks.ethereum,
+    asaId: SYNTHETIC_ASA_IDS.ETH,
+    decimals: 6,
+  },
+  {
+    symbol: "SOL",
+    name: "Solana",
+    networkColor: C.networks.polygon,
+    asaId: SYNTHETIC_ASA_IDS.SOL,
+    decimals: 6,
+  },
+  {
+    symbol: "ADA",
+    name: "Cardano",
+    networkColor: C.networks.polygon,
+    asaId: SYNTHETIC_ASA_IDS.ADA,
+    decimals: 6,
+  },
+  {
+    symbol: "XRP",
+    name: "Ripple",
+    networkColor: C.networks.ethereum,
+    asaId: SYNTHETIC_ASA_IDS.XRP,
+    decimals: 6,
+  },
+  {
+    symbol: "SUI",
+    name: "Sui",
+    networkColor: C.networks.polygon,
+    asaId: SYNTHETIC_ASA_IDS.SUI,
+    decimals: 6,
+  },
+  {
+    symbol: "APT",
+    name: "Aptos",
+    networkColor: C.networks.polygon,
+    asaId: SYNTHETIC_ASA_IDS.APT,
+    decimals: 6,
+  },
+  {
+    symbol: "NEAR",
+    name: "Near",
+    networkColor: C.networks.ethereum,
+    asaId: SYNTHETIC_ASA_IDS.NEAR,
+    decimals: 6,
+  },
+  {
+    symbol: "AVAX",
+    name: "Avalanche",
+    networkColor: C.networks.ethereum,
+    asaId: SYNTHETIC_ASA_IDS.AVAX,
+    decimals: 6,
+  },
+  {
+    symbol: "MOVE",
+    name: "Movement",
+    networkColor: C.networks.ethereum,
+    asaId: SYNTHETIC_ASA_IDS.MOVE,
+    decimals: 6,
+  },
 ];
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+const TOKEN_BY_SYMBOL: Record<string, Token> = TOKENS.reduce((acc, token) => {
+  acc[token.symbol] = token;
+  return acc;
+}, {} as Record<string, Token>);
+
+function parseAmountInput(raw: string): string {
+  const normalized = raw.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  const firstDot = normalized.indexOf(".");
+  const compact =
+    firstDot === -1
+      ? normalized
+      : `${normalized.slice(0, firstDot + 1)}${normalized
+          .slice(firstDot + 1)
+          .replace(/\./g, "")}`;
+
+  const [intPart, decimalPart] = compact.split(".");
+  if (decimalPart === undefined) return intPart;
+  return `${intPart}.${decimalPart.slice(0, 6)}`;
+}
+
+function toBaseUnits(amount: number, decimals: number): number {
+  return Math.round(amount * Math.pow(10, decimals));
+}
+
+function fromBaseUnits(amount: number, decimals: number): number {
+  return amount / Math.pow(10, decimals);
+}
+
+function formatUsd(value: number): string {
+  if (!Number.isFinite(value)) return "--";
+  if (value >= 1000) return `$${value.toFixed(2)}`;
+  if (value >= 1) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(6)}`;
+}
+
+function shortAmount(value: number, maxFraction = 6): string {
+  if (!Number.isFinite(value)) return "0";
+  const fixed = value.toFixed(maxFraction);
+  return fixed.replace(/\.0+$/, "").replace(/(\.[0-9]*?)0+$/, "$1");
+}
 
 export default function SwapScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ from?: string; to?: string }>();
 
-  const [walletAddress,     setWalletAddress]     = useState('');
-  const [balance,           setBalance]           = useState('0.000');
-  const [isLoading,         setIsLoading]         = useState(true);
-  const [fromToken,         setFromToken]         = useState<Token>(AVAILABLE_TOKENS[0]);
-  const [toToken,           setToToken]           = useState<Token>(AVAILABLE_TOKENS[1]);
-  const [fromAmount,        setFromAmount]        = useState('');
-  const [toAmount,          setToAmount]          = useState('');
-  const [showFromModal,     setShowFromModal]     = useState(false);
-  const [showToModal,       setShowToModal]       = useState(false);
-  const [isSwapping,        setIsSwapping]        = useState(false);
-  const [isFetchingQuote,   setIsFetchingQuote]   = useState(false);
-  const [quoteError,        setQuoteError]        = useState<string | null>(null);
-  const [portfolioAssets,   setPortfolioAssets]   = useState<StoredSwapAsset[]>([]);
+  const [walletAddress, setWalletAddress] = useState("");
+  const [algoBalance, setAlgoBalance] = useState(0);
+  const [portfolioAssets, setPortfolioAssets] = useState<StoredSwapAsset[]>([]);
 
-  // Live quote state
-  const [currentQuote,      setCurrentQuote]      = useState<SwapQuote | null>(null);
-  const [priceImpact,       setPriceImpact]       = useState<number | null>(null);
-  const [routeText,         setRouteText]         = useState<string | null>(null);
-  const [dartSavingsPct,    setDartSavingsPct]    = useState<number | null>(null);
-  const [notice,            setNotice]            = useState<{
-    title: string;
-    message: string;
-    tone: AppNoticeTone;
-    actions?: AppNoticeAction[];
-  } | null>(null);
+  const [fromToken, setFromToken] = useState<Token>(TOKEN_BY_SYMBOL.ETH);
+  const [toToken, setToToken] = useState<Token>(TOKEN_BY_SYMBOL.USDC);
 
-  // Debounce timer ref
-  const quoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [fromAmount, setFromAmount] = useState("");
+  const [toAmount, setToAmount] = useState("");
+  const [quote, setQuote] = useState<SwapQuote | null>(null);
 
-  // ---------------------------------------------------------------------------
-  // Init
-  // ---------------------------------------------------------------------------
+  const [swapState, setSwapState] = useState<SwapState>("idle");
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [executionError, setExecutionError] = useState<string | null>(null);
+  const [lastTxId, setLastTxId] = useState<string | null>(null);
+
+  const [slippagePct, setSlippagePct] = useState(0.5);
+  const [customSlippage, setCustomSlippage] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  const [tokenSheetTarget, setTokenSheetTarget] = useState<"from" | "to">("from");
+  const [tokenSearch, setTokenSearch] = useState("");
+
+  const tokenSheetRef = useRef<BottomSheetModal | null>(null);
+  const slippageSheetRef = useRef<BottomSheetModal | null>(null);
+
+  const [pythRate, setPythRate] = useState<number | null>(null);
+  const [pythLoading, setPythLoading] = useState(true);
+
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+
+  const quoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    initializeWallet();
+    return () => {
+      if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    };
   }, []);
 
-  // Re-fetch quote when tokens or amount changes (debounced 600 ms)
   useEffect(() => {
-    if (quoteTimer.current) clearTimeout(quoteTimer.current);
-    if (!fromAmount || parseFloat(fromAmount) <= 0) {
-      setToAmount('');
-      setCurrentQuote(null);
-      setPriceImpact(null);
-      setRouteText(null);
-      setDartSavingsPct(null);
+    void initialize();
+  }, []);
+
+  useEffect(() => {
+    const from = String(params.from ?? "").toUpperCase();
+    const to = String(params.to ?? "").toUpperCase();
+    const nextFrom = TOKEN_BY_SYMBOL[from];
+    const nextTo = TOKEN_BY_SYMBOL[to];
+
+    if (nextFrom && nextTo && nextFrom.symbol !== nextTo.symbol) {
+      setFromToken(nextFrom);
+      setToToken(nextTo);
+    }
+  }, [params.from, params.to]);
+
+  useEffect(() => {
+    void loadPairRate();
+  }, [fromToken.symbol, toToken.symbol]);
+
+  useEffect(() => {
+    if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
+
+    const parsed = Number(fromAmount);
+    if (!fromAmount || !Number.isFinite(parsed) || parsed <= 0) {
+      setToAmount("");
+      setQuote(null);
+      setQuoteError(null);
+      if (swapState === "quoting") setSwapState("idle");
       return;
     }
-    quoteTimer.current = setTimeout(() => loadLiveQuote(), 600);
-    return () => {
-      if (quoteTimer.current) clearTimeout(quoteTimer.current);
-    };
-  }, [fromAmount, fromToken, toToken]);
 
-  const initializeWallet = async () => {
+    quoteTimerRef.current = setTimeout(() => {
+      void loadQuote();
+    }, 500);
+
+    return () => {
+      if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
+    };
+  }, [fromAmount, fromToken.asaId, toToken.asaId]);
+
+  const initialize = async () => {
+    setIsBootstrapping(true);
     try {
-      const walletData = await algorandService.initializeWallet();
-      setWalletAddress(walletData.address);
-      const { algo } = await algorandService.getBalance();
-      setBalance(parseFloat(algo).toFixed(3));
-      const stored = await swapPortfolioStore.getAll(walletData.address);
+      const wallet = await algorandService.initializeWallet();
+      setWalletAddress(wallet.address);
+
+      const [{ algo }, stored] = await Promise.all([
+        algorandService.getBalance(),
+        swapPortfolioStore.getAll(wallet.address),
+      ]);
+
+      setAlgoBalance(Number(algo));
       setPortfolioAssets(stored);
-    } catch (err) {
-      console.error('Error initialising Algorand wallet:', err);
+    } catch (error: any) {
+      setExecutionError(error?.message ?? "Failed to initialize wallet");
     } finally {
-      setIsLoading(false);
+      setIsBootstrapping(false);
     }
   };
 
-  const refreshPortfolio = async (address?: string) => {
-    const addr = address ?? walletAddress;
-    if (!addr) return;
-    const stored = await swapPortfolioStore.getAll(addr);
+  const refreshWalletSnapshots = async () => {
+    if (!walletAddress) return;
+    const [{ algo }, stored] = await Promise.all([
+      algorandService.getBalance(),
+      swapPortfolioStore.getAll(walletAddress),
+    ]);
+    setAlgoBalance(Number(algo));
     setPortfolioAssets(stored);
   };
 
-  // ---------------------------------------------------------------------------
-  // Live quote
-  // ---------------------------------------------------------------------------
+  const getTokenBalance = (token: Token): number => {
+    if (token.asaId === 0) return algoBalance;
+    return portfolioAssets.find((asset) => asset.symbol === token.symbol)?.amount ?? 0;
+  };
 
-  const loadLiveQuote = async () => {
-    const amount = parseFloat(fromAmount);
-    if (!amount || amount <= 0) return;
-    if (fromToken.asaId === toToken.asaId) return;
-
-    setIsFetchingQuote(true);
-    setQuoteError(null);
+  const loadPairRate = async () => {
+    setPythLoading(true);
     try {
-      const amountBase = Math.round(amount * Math.pow(10, fromToken.decimals));
-      const quote = await dartRouterService.fetchQuote(fromToken.asaId, toToken.asaId, amountBase);
-
-      const outputAmount = quote.quote / Math.pow(10, toToken.decimals);
-      setToAmount(outputAmount.toFixed(toToken.decimals));
-      setCurrentQuote(quote);
-      setPriceImpact(quote.userPriceImpact);
-      setRouteText(dartRouterService.formatRoute(quote));
-
-      const { savingsPct } = dartRouterService.getDartSavings(quote);
-      setDartSavingsPct(savingsPct > 0.001 ? savingsPct : null);
-    } catch (err: any) {
-      const message = String(err?.message ?? 'Failed to fetch swap quote');
-      console.warn('Quote fetch failed:', message);
-      setQuoteError(message);
-
-      // Fallback: show an estimate from oracle prices so UI remains responsive.
-      try {
-        const fromUsd = fromToken.symbol === 'USDC'
-          ? 1
-          : (await pythOracleService.getPrice(fromToken.symbol))?.price;
-        const toUsd = toToken.symbol === 'USDC'
-          ? 1
-          : (await pythOracleService.getPrice(toToken.symbol))?.price;
-
-        if (fromUsd && toUsd && fromUsd > 0 && toUsd > 0) {
-          const estimated = (amount * fromUsd) / toUsd;
-          setToAmount(estimated.toFixed(toToken.decimals));
-          setRouteText('Estimated from oracle prices');
-        } else {
-          setToAmount('');
-          setRouteText(null);
-        }
-      } catch {
-        setToAmount('');
-        setRouteText(null);
-      }
-
-      setCurrentQuote(null);
-      setPriceImpact(null);
-      setDartSavingsPct(null);
-    } finally {
-      setIsFetchingQuote(false);
-    }
-  };
-
-  const showNotice = (
-    title: string,
-    message: string,
-    tone: AppNoticeTone = 'info',
-    actions?: AppNoticeAction[],
-  ) => {
-    setNotice({ title, message, tone, actions });
-  };
-
-  // ---------------------------------------------------------------------------
-  // Token swap direction
-  // ---------------------------------------------------------------------------
-
-  const handleSwapTokens = () => {
-    const tmp = fromToken;
-    setFromToken(toToken);
-    setToToken(tmp);
-    setFromAmount('');
-    setToAmount('');
-    setCurrentQuote(null);
-    setQuoteError(null);
-  };
-
-  const handleSelectFromToken = (token: Token) => {
-    if (token.symbol === toToken.symbol) {
-      setFromToken(token);
-      setToToken(fromToken);
-    } else {
-      setFromToken(token);
-    }
-    setShowFromModal(false);
-    setFromAmount('');
-    setToAmount('');
-    setQuoteError(null);
-  };
-
-  const handleSelectToToken = (token: Token) => {
-    if (token.symbol === fromToken.symbol) {
-      setToToken(token);
-      setFromToken(toToken);
-    } else {
-      setToToken(token);
-    }
-    setShowToModal(false);
-    setFromAmount('');
-    setToAmount('');
-    setQuoteError(null);
-  };
-
-  // ---------------------------------------------------------------------------
-  // Swap execution
-  // ---------------------------------------------------------------------------
-
-  const handlePreviewSwap = async () => {
-    if (!fromAmount || parseFloat(fromAmount) <= 0) {
-      showNotice('Invalid Amount', 'Please enter a valid amount.', 'error');
-      return;
-    }
-    if (fromToken.asaId === 0 && parseFloat(fromAmount) > parseFloat(balance)) {
-      showNotice('Insufficient Balance', 'Insufficient ALGO balance.', 'error');
-      return;
-    }
-    if (!currentQuote) {
-      showNotice('Quote Not Ready', 'Please wait a moment and try again.', 'error');
-      return;
-    }
-
-    const impact  = (currentQuote.userPriceImpact).toFixed(2);
-    const savings = dartSavingsPct != null ? `\nSavings: +${dartSavingsPct.toFixed(3)}% vs best single venue` : '';
-    const route   = routeText ? `\nRoute: ${routeText}` : '';
-
-    const routeName = currentQuote.route?.[0]?.path?.[0]?.name ?? '';
-    if (routeName === 'oracle-estimate') {
-      showNotice(
-        'Estimate Ready',
-        `Estimated ${toToken.symbol} output: ${toAmount}\n\nYou can store this swap in-app now (local portfolio record).`,
-        'info',
-        [
-          { label: 'Cancel', style: 'secondary' },
-          { label: 'Store In App', style: 'primary', onPress: () => void handleStoreSwapInApp() },
-        ],
-      );
-      return;
-    }
-
-    showNotice(
-      'Swap Preview',
-      `Swap ${fromAmount} ${fromToken.symbol}\nFor ≥ ${toAmount} ${toToken.symbol}\n\nPrice Impact: ${impact}%${route}${savings}`,
-      'info',
-      [
-        { label: 'Cancel', style: 'secondary' },
-        { label: 'Execute Swap', style: 'primary', onPress: () => void handleExecuteSwap() },
-      ],
-    );
-  };
-
-  const handleExecuteSwap = async () => {
-    if (!currentQuote) return;
-    try {
-      setIsSwapping(true);
-      const { txId } = await dartRouterService.executeSwap(currentQuote, 0.5);
-      const explorerUrl = `https://lora.algokit.io/testnet/transaction/${txId}`;
-
-      showNotice(
-        'Swap Successful',
-        `Swapped ${fromAmount} ${fromToken.symbol} for ${toAmount} ${toToken.symbol}`,
-        'success',
-        [
-          { label: 'View on Explorer', style: 'secondary', onPress: () => Linking.openURL(explorerUrl) },
-          { label: 'Done', style: 'primary', onPress: () => router.back() },
-        ],
-      );
-
-      setFromAmount('');
-      setToAmount('');
-      setCurrentQuote(null);
-
-      await swapPortfolioStore.applySwap(
-        walletAddress,
-        {
-          symbol: fromToken.symbol,
-          asaId: fromToken.asaId,
-          amount: parseFloat(fromAmount),
-        },
-        {
-          symbol: toToken.symbol,
-          asaId: toToken.asaId,
-          amount: parseFloat(toAmount),
-        },
-      );
-      await refreshPortfolio();
-
-      const { algo } = await algorandService.getBalance();
-      setBalance(parseFloat(algo).toFixed(3));
-    } catch (err: any) {
-      showNotice('Swap Failed', err.message || 'Unknown error', 'error');
-    } finally {
-      setIsSwapping(false);
-    }
-  };
-
-  const handleStoreSwapInApp = async () => {
-    const from = parseFloat(fromAmount);
-    const to = parseFloat(toAmount);
-    if (!walletAddress || !Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= 0) {
-      showNotice('Invalid Amount', 'Invalid swap amount for storage.', 'error');
-      return;
-    }
-
-    if (fromToken.asaId !== 0) {
-      const current = await swapPortfolioStore.getAmount(walletAddress, fromToken.symbol);
-      if (current < from) {
-        showNotice('Insufficient Stored Balance', `You only have ${current.toFixed(6)} ${fromToken.symbol} in app storage.`, 'error');
+      if (fromToken.symbol === toToken.symbol) {
+        setPythRate(1);
         return;
       }
+
+      const [fromPrice, toPrice] = await Promise.all([
+        fromToken.symbol === "USDC"
+          ? Promise.resolve({ price: 1 })
+          : pythOracleService.getPrice(fromToken.symbol),
+        toToken.symbol === "USDC"
+          ? Promise.resolve({ price: 1 })
+          : pythOracleService.getPrice(toToken.symbol),
+      ]);
+
+      if (!fromPrice?.price || !toPrice?.price || toPrice.price <= 0) {
+        setPythRate(null);
+        return;
+      }
+
+      setPythRate(fromPrice.price / toPrice.price);
+    } catch {
+      setPythRate(null);
+    } finally {
+      setPythLoading(false);
     }
-
-    await swapPortfolioStore.applySwap(
-      walletAddress,
-      { symbol: fromToken.symbol, asaId: fromToken.asaId, amount: from },
-      { symbol: toToken.symbol, asaId: toToken.asaId, amount: to },
-    );
-    await refreshPortfolio();
-
-    showNotice('Stored', `${to.toFixed(6)} ${toToken.symbol} saved in your app portfolio.`, 'success');
-    setFromAmount('');
-    setToAmount('');
-    setCurrentQuote(null);
   };
 
-  // ---------------------------------------------------------------------------
-  // Token selector modal
-  // ---------------------------------------------------------------------------
+  const loadQuote = async (): Promise<SwapQuote | null> => {
+    const amountNumber = Number(fromAmount);
+    if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
+      return null;
+    }
+    if (fromToken.asaId === toToken.asaId) {
+      return null;
+    }
 
-  const renderTokenModal = (isFrom: boolean) => {
-    const visible      = isFrom ? showFromModal : showToModal;
-    const setVisible   = isFrom ? setShowFromModal : setShowToModal;
-    const handleSelect = isFrom ? handleSelectFromToken : handleSelectToToken;
-    const selected     = isFrom ? fromToken : toToken;
+    setSwapState("quoting");
+    setQuoteError(null);
 
-    return (
-      <Modal visible={visible} animationType="slide" transparent onRequestClose={() => setVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.tokenModalContent}>
-            <View style={styles.tokenModalHandle} />
-            <View style={styles.tokenModalHeader}>
-              <Text style={styles.tokenModalTitle}>Select Token</Text>
-              <TouchableOpacity
-                onPress={() => setVisible(false)}
-                accessibilityRole="button"
-                accessibilityLabel="Close token selector"
-                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-              >
-                <Ionicons name="close" size={22} color={Colors.steel} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.tokenList} showsVerticalScrollIndicator={false}>
-              {AVAILABLE_TOKENS.map((token) => (
-                <TouchableOpacity
-                  key={token.symbol}
-                  style={styles.tokenItem}
-                  onPress={() => handleSelect(token)}
-                  activeOpacity={0.75}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select ${token.name}`}
-                  accessibilityState={{ selected: token.symbol === selected.symbol }}
-                >
-                  <View style={[styles.tokenIcon, { backgroundColor: Colors.bg.subtle }]}>
-                    <Ionicons name={token.icon} size={22} color={Colors.navy} />
-                  </View>
-                  <View style={styles.tokenInfo}>
-                    <Text style={styles.tokenSymbol}>{token.symbol}</Text>
-                    <Text style={styles.tokenName}>{token.name}</Text>
-                  </View>
-                  {token.symbol === selected.symbol && (
-                    <Ionicons name="checkmark-circle" size={22} color={Colors.navy} />
-                  )}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-    );
+    try {
+      const quoteData = await dartRouterService.fetchQuote(
+        fromToken.asaId,
+        toToken.asaId,
+        toBaseUnits(amountNumber, fromToken.decimals),
+      );
+
+      setQuote(quoteData);
+      setToAmount(shortAmount(fromBaseUnits(quoteData.quote, toToken.decimals), 6));
+      setSwapState("idle");
+      return quoteData;
+    } catch (error: any) {
+      const message = error?.message ?? "Failed to fetch quote";
+      setQuote(null);
+      setToAmount("");
+      setQuoteError(message);
+      setSwapState("failed");
+      return null;
+    }
   };
 
-  // ---------------------------------------------------------------------------
-  // Animations
-  // ---------------------------------------------------------------------------
+  const handleSwapDirection = () => {
+    const oldFrom = fromToken;
+    setFromToken(toToken);
+    setToToken(oldFrom);
+    setFromAmount("");
+    setToAmount("");
+    setQuote(null);
+    setQuoteError(null);
+    setExecutionError(null);
+    setLastTxId(null);
+    setSwapState("idle");
+  };
 
-  const fadeAnim  = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(16)).current;
+  const openTokenSheet = (target: "from" | "to") => {
+    setTokenSheetTarget(target);
+    setTokenSearch("");
+    tokenSheetRef.current?.present();
+  };
 
-  useEffect(() => {
-    if (!isLoading) {
-      Animated.parallel([
-        Animated.timing(fadeAnim,  { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        Animated.timing(slideAnim, { toValue: 0, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      ]).start();
+  const selectToken = (nextToken: Token) => {
+    if (tokenSheetTarget === "from") {
+      if (nextToken.symbol === toToken.symbol) {
+        setToToken(fromToken);
+      }
+      setFromToken(nextToken);
+    } else {
+      if (nextToken.symbol === fromToken.symbol) {
+        setFromToken(toToken);
+      }
+      setToToken(nextToken);
     }
-  }, [isLoading]);
 
-  if (isLoading) {
+    tokenSheetRef.current?.dismiss();
+    setFromAmount("");
+    setToAmount("");
+    setQuote(null);
+    setQuoteError(null);
+    setExecutionError(null);
+    setLastTxId(null);
+    setSwapState("idle");
+  };
+
+  const executeSwap = async () => {
+    setExecutionError(null);
+
+    const amountNumber = Number(fromAmount);
+    if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
+      setExecutionError("Enter a valid amount to swap.");
+      setSwapState("failed");
+      return;
+    }
+
+    if (fromToken.asaId === 0 && amountNumber > algoBalance) {
+      setExecutionError("Insufficient ALGO balance.");
+      setSwapState("failed");
+      return;
+    }
+
+    let activeQuote = quote;
+    if (!activeQuote) {
+      activeQuote = await loadQuote();
+    }
+
+    if (!activeQuote) {
+      setExecutionError("Quote unavailable. Try again.");
+      setSwapState("failed");
+      return;
+    }
+
+    try {
+      setSwapState("routing");
+
+      const routeName = activeQuote.route?.[0]?.path?.[0]?.name ?? "";
+      const estimatedOnly = routeName === "oracle-estimate";
+
+      setSwapState("awaiting_sign");
+
+      if (estimatedOnly) {
+        if (walletAddress) {
+          await swapPortfolioStore.applySwap(
+            walletAddress,
+            {
+              symbol: fromToken.symbol,
+              asaId: fromToken.asaId,
+              amount: amountNumber,
+            },
+            {
+              symbol: toToken.symbol,
+              asaId: toToken.asaId,
+              amount: fromBaseUnits(activeQuote.quote, toToken.decimals),
+            },
+          );
+          await refreshWalletSnapshots();
+        }
+        setLastTxId(null);
+      } else {
+        setSwapState("broadcasting");
+        const executed = await dartRouterService.executeSwap(activeQuote, slippagePct);
+        setLastTxId(executed.txId);
+
+        if (walletAddress) {
+          await swapPortfolioStore.applySwap(
+            walletAddress,
+            {
+              symbol: fromToken.symbol,
+              asaId: fromToken.asaId,
+              amount: amountNumber,
+            },
+            {
+              symbol: toToken.symbol,
+              asaId: toToken.asaId,
+              amount: fromBaseUnits(executed.amountOut, toToken.decimals),
+            },
+          );
+        }
+
+        await refreshWalletSnapshots();
+      }
+
+      setFromAmount("");
+      setToAmount("");
+      setQuote(null);
+      setQuoteError(null);
+      setSwapState("confirmed");
+
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+      confirmTimerRef.current = setTimeout(() => setSwapState("idle"), 2000);
+    } catch (error: any) {
+      setExecutionError(error?.message ?? "Swap failed. Please retry.");
+      setSwapState("failed");
+    }
+  };
+
+  const applySlippage = () => {
+    const custom = Number(customSlippage);
+    if (Number.isFinite(custom) && custom > 0) {
+      setSlippagePct(custom);
+    }
+    slippageSheetRef.current?.dismiss();
+  };
+
+  const ctaPresentation = useMemo(() => {
+    switch (swapState) {
+      case "quoting":
+        return { label: "Getting quote...", variant: "black" as const, loading: true };
+      case "routing":
+        return { label: "Routing via DART...", variant: "purple" as const, loading: true };
+      case "awaiting_sign":
+        return { label: "Sign Transaction", variant: "teal" as const, loading: false };
+      case "broadcasting":
+        return { label: "Broadcasting...", variant: "black" as const, loading: true };
+      case "confirmed":
+        return { label: "✓ Swapped", variant: "teal" as const, loading: false };
+      case "failed":
+        return { label: "Retry", variant: "black" as const, loading: false };
+      case "idle":
+      default:
+        return { label: "Swap", variant: "black" as const, loading: false };
+    }
+  }, [swapState]);
+
+  const isBusyState =
+    swapState === "quoting" ||
+    swapState === "routing" ||
+    swapState === "awaiting_sign" ||
+    swapState === "broadcasting";
+
+  const canSubmit =
+    !!fromAmount &&
+    Number(fromAmount) > 0 &&
+    fromToken.symbol !== toToken.symbol &&
+    !isBusyState;
+
+  const routeLabel = quote ? dartRouterService.formatRoute(quote) : "--";
+  const fromUsdValue = Number(fromAmount || 0) * (pythRate ?? 0);
+  const toUsdValue = Number(toAmount || 0);
+
+  const filteredTokens = useMemo(() => {
+    const query = tokenSearch.trim().toLowerCase();
+    if (!query) return TOKENS;
+    return TOKENS.filter(
+      (token) =>
+        token.symbol.toLowerCase().includes(query) ||
+        token.name.toLowerCase().includes(query),
+    );
+  }, [tokenSearch]);
+
+  if (isBootstrapping) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.navy} />
-      </View>
+      <ScreenContainer style={styles.loaderWrap}>
+        <ActivityIndicator size="large" color={C.brand.black} />
+      </ScreenContainer>
     );
   }
 
-  const canSwap = !isSwapping && !isFetchingQuote && !!currentQuote && parseFloat(fromAmount || '0') > 0;
-
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
-
   return (
-    <ScreenContainer style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-        >
-          <Ionicons name="arrow-back" size={22} color={Colors.navy} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Swap</Text>
-        <View style={styles.placeholder} />
-      </View>
+    <ScreenContainer style={styles.container} bottomInset={false}>
+      <HeaderBar
+        mode="title"
+        title="Swap"
+        onBackPress={() => router.back()}
+        rightSlot={<Ionicons name="mail-outline" size={20} color={C.text.t1} />}
+      />
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
-        <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
+      <View style={styles.body}>
+        <View style={styles.banner}>
+          <Text style={styles.bannerTitle}>⚡ DART Route Active</Text>
+          <Text style={styles.bannerText}>Best price path found on Algorand</Text>
+        </View>
 
-          {/* From token */}
-          <View style={styles.swapCard}>
-            <Text style={styles.cardLabel}>FROM</Text>
-            <View style={styles.inputRow}>
-              <TextInput
-                style={styles.amountInput}
-                value={fromAmount}
-                onChangeText={setFromAmount}
-                placeholder="0.00"
-                placeholderTextColor={Colors.sky}
-                keyboardType="decimal-pad"
-              />
-              <TouchableOpacity
-                style={styles.tokenSelector}
-                onPress={() => setShowFromModal(true)}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel={`Select from token, currently ${fromToken.symbol}`}
-              >
-                <View style={styles.tokenIconSmall}>
-                  <Ionicons name={fromToken.icon} size={18} color={Colors.navy} />
-                </View>
-                <View style={styles.tokenSelectorText}>
-                  <Text style={styles.tokenSelectorSymbol}>{fromToken.symbol}</Text>
-                  <Text style={styles.tokenSelectorName}>{fromToken.name}</Text>
-                </View>
-                <Ionicons name="chevron-down" size={16} color={Colors.steel} />
-              </TouchableOpacity>
+        <View style={styles.slotCard}>
+          <View style={styles.slotTopRow}>
+            <View style={styles.slotTitleWrap}>
+              <Text style={styles.slotLabel}>From ·</Text>
+              <AssetChip symbol={fromToken.name} networkColor={fromToken.networkColor} />
             </View>
-            {fromToken.asaId === 0 && (
-              <Text style={styles.balanceText}>Balance: {balance} ALGO</Text>
-            )}
+            <Text style={styles.balanceText}>${shortAmount(getTokenBalance(fromToken), 3)} bal</Text>
           </View>
 
-          {/* Swap direction */}
-          <View style={styles.swapButtonContainer}>
+          <View style={styles.slotMiddleRow}>
             <TouchableOpacity
-              style={styles.swapIconButton}
-              onPress={handleSwapTokens}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Swap token order"
+              style={styles.tokenPill}
+              activeOpacity={0.9}
+              onPress={() => openTokenSheet("from")}
             >
-              <Ionicons name="swap-vertical" size={20} color={Colors.navy} />
+              <Text style={styles.tokenPillText}>{fromToken.symbol}</Text>
+              <Ionicons name="chevron-down" size={14} color={C.text.t1} />
             </TouchableOpacity>
+
+            <TextInput
+              value={fromAmount}
+              onChangeText={(value) => {
+                setFromAmount(parseAmountInput(value));
+                setQuoteError(null);
+                setExecutionError(null);
+                setLastTxId(null);
+              }}
+              keyboardType="decimal-pad"
+              placeholder="0.0"
+              placeholderTextColor={C.text.tPh}
+              style={styles.amountInput}
+            />
           </View>
 
-          {/* To token */}
-          <View style={styles.swapCard}>
-            <Text style={styles.cardLabel}>TO</Text>
-            <View style={styles.inputRow}>
-              {isFetchingQuote
-                ? <ActivityIndicator style={{ flex: 1 }} color={Colors.steel} />
-                : (
-                  <TextInput
-                    style={[styles.amountInput, { color: Colors.steel }]}
-                    value={toAmount}
-                    placeholder="0.00"
-                    placeholderTextColor={Colors.sky}
-                    editable={false}
-                  />
-                )}
-              <TouchableOpacity
-                style={styles.tokenSelector}
-                onPress={() => setShowToModal(true)}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel={`Select to token, currently ${toToken.symbol}`}
-              >
-                <View style={styles.tokenIconSmall}>
-                  <Ionicons name={toToken.icon} size={18} color={Colors.navy} />
-                </View>
-                <View style={styles.tokenSelectorText}>
-                  <Text style={styles.tokenSelectorSymbol}>{toToken.symbol}</Text>
-                  <Text style={styles.tokenSelectorName}>{toToken.name}</Text>
-                </View>
-                <Ionicons name="chevron-down" size={16} color={Colors.steel} />
-              </TouchableOpacity>
-            </View>
-          </View>
+          <Text style={styles.usdLine}>{fromAmount ? `-${formatUsd(fromUsdValue)}` : "--"}</Text>
+        </View>
 
-          {/* Live quote details */}
-          {currentQuote && (
-            <View style={styles.rateCard}>
-              {priceImpact !== null && (
-                <View style={styles.rateRow}>
-                  <Text style={styles.rateLabel}>Price Impact</Text>
-                  <Text style={[styles.rateValue, priceImpact > 2 ? styles.impactHigh : styles.impactLow]}>
-                    {priceImpact.toFixed(2)}%
-                  </Text>
-                </View>
-              )}
-              {routeText && (
-                <View style={styles.rateRow}>
-                  <Text style={styles.rateLabel}>Route</Text>
-                  <Text style={[styles.rateValue, { maxWidth: '60%', textAlign: 'right' }]}>{routeText}</Text>
-                </View>
-              )}
-              <View style={styles.rateRow}>
-                <Text style={styles.rateLabel}>USD Value In</Text>
-                <Text style={styles.rateValue}>${currentQuote.usdIn.toFixed(2)}</Text>
-              </View>
-              <View style={styles.rateRow}>
-                <Text style={styles.rateLabel}>USD Value Out</Text>
-                <Text style={styles.rateValue}>${currentQuote.usdOut.toFixed(2)}</Text>
-              </View>
-              {/* Savings badge */}
-              {dartSavingsPct !== null && dartSavingsPct > 0 && (
-                <View style={styles.dartBadge}>
-                  <Ionicons name="flash" size={14} color={Colors.obsidian.onTertiaryContainer} />
-                  <Text style={styles.dartBadgeText}>
-                    Estimated savings +{dartSavingsPct.toFixed(3)}% vs best single venue
-                  </Text>
-                </View>
-              )}
-            </View>
-          )}
-
-          {quoteError && (
-            <View style={styles.quoteErrorCard}>
-              <Ionicons name="alert-circle-outline" size={16} color={Colors.loss} />
-              <Text style={styles.quoteErrorText}>{quoteError}</Text>
-            </View>
-          )}
-
-          {/* Info note */}
-          <View style={styles.infoCard}>
-            <Ionicons name="information-circle-outline" size={17} color={Colors.steel} />
-            <Text style={styles.infoText}>
-              Live on-chain swapping is enabled for ALGO ↔ TST.
-              Other pairs currently show oracle estimates; you can still store outputs in-app.
-            </Text>
-          </View>
-
-          {portfolioAssets.length > 0 && (
-            <View style={styles.rateCard}>
-              <Text style={styles.cardLabel}>IN-APP STORED ASSETS</Text>
-              {portfolioAssets.map((asset) => (
-                <View key={asset.symbol} style={styles.rateRow}>
-                  <Text style={styles.rateLabel}>{asset.symbol}</Text>
-                  <Text style={styles.rateValue}>{asset.amount.toFixed(6)}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Preview / execute button */}
+        <View style={styles.swapDirectionWrap}>
           <TouchableOpacity
-            style={[styles.previewButton, !canSwap && styles.previewButtonDisabled]}
-            onPress={handlePreviewSwap}
-            disabled={!canSwap}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="Preview swap"
-            accessibilityState={{ disabled: !canSwap }}
+            style={styles.swapDirectionBtn}
+            activeOpacity={0.9}
+            onPress={handleSwapDirection}
           >
-            {isSwapping
-              ? <ActivityIndicator color={Colors.white} />
-              : <Text style={styles.previewButtonText}>
-                  {isFetchingQuote ? 'Fetching Quote…' : 'Preview Estimate'}
-                </Text>}
+            <Text style={styles.swapDirectionText}>⇅</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.slotCard}>
+          <View style={styles.slotTopRow}>
+            <View style={styles.slotTitleWrap}>
+              <Text style={styles.slotLabel}>To ·</Text>
+              <AssetChip symbol={toToken.name} networkColor={toToken.networkColor} />
+            </View>
+            <Text style={styles.balanceText}>${shortAmount(getTokenBalance(toToken), 3)} bal</Text>
+          </View>
+
+          <View style={styles.slotMiddleRow}>
+            <TouchableOpacity
+              style={styles.tokenPill}
+              activeOpacity={0.9}
+              onPress={() => openTokenSheet("to")}
+            >
+              <Text style={styles.tokenPillText}>{toToken.symbol}</Text>
+              <Ionicons name="chevron-down" size={14} color={C.text.t1} />
+            </TouchableOpacity>
+
+            <TextInput
+              value={toAmount}
+              editable={false}
+              placeholder="0.0"
+              placeholderTextColor={C.text.tPh}
+              style={[styles.amountInput, styles.toAmountInput]}
+            />
+          </View>
+
+          <Text style={styles.usdLine}>{toAmount ? `-${formatUsd(toUsdValue)}` : "--"}</Text>
+        </View>
+
+        <View style={styles.priceRow}>
+          <Text style={styles.priceRowText}>
+            {pythRate ? `1 ${fromToken.symbol} = ${shortAmount(pythRate, 6)} ${toToken.symbol}` : "Price unavailable"}
+          </Text>
+          <LiveBadge isLoading={pythLoading || swapState === "quoting"} />
+        </View>
+
+        <View style={styles.detailsWrap}>
+          <TouchableOpacity
+            style={styles.detailsHeader}
+            activeOpacity={0.9}
+            onPress={() => setDetailsOpen((prev) => !prev)}
+          >
+            <Text style={styles.detailsTitle}>Details</Text>
+            <Ionicons
+              name={detailsOpen ? "chevron-up" : "chevron-down"}
+              size={16}
+              color={C.text.t2}
+            />
           </TouchableOpacity>
 
-        </Animated.View>
-      </ScrollView>
+          {detailsOpen ? (
+            <View style={styles.detailsBody}>
+              <View style={styles.detailsRow}>
+                <Text style={styles.detailsKey}>Slippage</Text>
+                <TouchableOpacity
+                  onPress={() => slippageSheetRef.current?.present()}
+                  style={styles.detailAction}
+                  activeOpacity={0.9}
+                >
+                  <Text style={styles.detailsValue}>{slippagePct.toFixed(2)}%</Text>
+                  <Text style={styles.detailEdit}>Edit</Text>
+                </TouchableOpacity>
+              </View>
 
-      {renderTokenModal(true)}
-      {renderTokenModal(false)}
-      <AppNoticeModal
-        visible={!!notice}
-        title={notice?.title ?? ''}
-        message={notice?.message ?? ''}
-        tone={notice?.tone ?? 'info'}
-        actions={notice?.actions}
-        onClose={() => setNotice(null)}
-      />
+              <View style={styles.detailsRow}>
+                <Text style={styles.detailsKey}>Network fee</Text>
+                <Text style={styles.detailsValue}>~0.001 ALGO</Text>
+              </View>
+
+              <View style={styles.detailsRow}>
+                <Text style={styles.detailsKey}>Route</Text>
+                <Text style={styles.detailsValueRoute}>{routeLabel}</Text>
+              </View>
+
+              <View style={styles.detailsRow}>
+                <Text style={styles.detailsKey}>DART App ID</Text>
+                <Text style={styles.detailsMono}>{DART_APP_ID}</Text>
+              </View>
+
+              {lastTxId ? (
+                <View style={styles.detailsRow}>
+                  <Text style={styles.detailsKey}>Last Tx</Text>
+                  <Text style={styles.detailsMono}>{`${lastTxId.slice(0, 10)}...${lastTxId.slice(-8)}`}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+
+        {quoteError ? <Text style={styles.errorText}>{quoteError}</Text> : null}
+        {executionError ? <Text style={styles.errorText}>{executionError}</Text> : null}
+      </View>
+
+      <View style={styles.footer}>
+        <PrimaryButton
+          label={ctaPresentation.label}
+          variant={ctaPresentation.variant}
+          loading={ctaPresentation.loading}
+          disabled={!canSubmit && swapState !== "failed"}
+          style={swapState === "failed" ? styles.ctaFailed : swapState === "confirmed" ? styles.ctaConfirmed : undefined}
+          onPress={() => {
+            void executeSwap();
+          }}
+        />
+      </View>
+
+      <CrescaSheet
+        sheetRef={tokenSheetRef}
+        snapPoints={["85%"]}
+        title="Select Token"
+      >
+        <CrescaInput
+          value={tokenSearch}
+          onChangeText={setTokenSearch}
+          placeholder="Search token"
+          containerStyle={styles.searchInputWrap}
+        />
+
+        <FlatList
+          data={filteredTokens}
+          keyExtractor={(item) => `${item.symbol}-${item.asaId}`}
+          contentContainerStyle={styles.tokenListContent}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.tokenRow}
+              activeOpacity={0.9}
+              onPress={() => selectToken(item)}
+            >
+              <View style={[styles.tokenDot, { backgroundColor: item.networkColor }]} />
+              <View style={styles.tokenMeta}>
+                <Text style={styles.tokenRowName}>{item.name}</Text>
+                <Text style={styles.tokenRowSymbol}>{item.symbol}</Text>
+              </View>
+              <Text style={styles.tokenRowBalance}>{shortAmount(getTokenBalance(item), 6)}</Text>
+            </TouchableOpacity>
+          )}
+        />
+      </CrescaSheet>
+
+      <CrescaSheet
+        sheetRef={slippageSheetRef}
+        snapPoints={["50%"]}
+        title="Slippage Tolerance"
+      >
+        <View style={styles.slippagePillsRow}>
+          {[0.1, 0.5, 1.0].map((value) => {
+            const selected = Math.abs(slippagePct - value) < 0.0001;
+            return (
+              <TouchableOpacity
+                key={value}
+                style={[styles.slippagePill, selected && styles.slippagePillActive]}
+                onPress={() => {
+                  setSlippagePct(value);
+                  setCustomSlippage("");
+                }}
+                activeOpacity={0.9}
+              >
+                <Text style={[styles.slippagePillText, selected && styles.slippagePillTextActive]}>
+                  {value}%
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <CrescaInput
+          label="Custom"
+          value={customSlippage}
+          onChangeText={(value) => setCustomSlippage(parseAmountInput(value))}
+          keyboardType="decimal-pad"
+          placeholder="0.50"
+        />
+
+        <PrimaryButton label="Save" variant="black" onPress={applySlippage} style={styles.slippageSaveBtn} />
+      </CrescaSheet>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container:         { flex: 1, backgroundColor: Colors.bg.screen },
-  loadingContainer:  { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.bg.screen },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
-    backgroundColor: Colors.white, borderBottomWidth: 1, borderBottomColor: Colors.divider,
+  container: {
+    flex: 1,
+    backgroundColor: C.surfaces.bgBase,
   },
-  backButton:       { padding: 6, borderRadius: Radius.sm },
-  headerTitle:      { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.navy },
-  placeholder:      { width: 34 },
-  content:          { flex: 1 },
-  contentContainer: { padding: Spacing.xl, paddingBottom: 60 },
-  swapCard: {
-    backgroundColor: Colors.white, borderRadius: Radius.lg, padding: Spacing.xl, ...Shadow.card,
+  loaderWrap: {
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: C.surfaces.bgBase,
   },
-  cardLabel:  { fontSize: Typography.xs, fontWeight: Typography.bold, color: Colors.steel, marginBottom: 12, letterSpacing: 0.8 },
-  inputRow:   { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  amountInput: { flex: 1, fontSize: Typography.xxl, fontWeight: Typography.bold, color: Colors.navy, padding: 0 },
-  tokenSelector: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.bg.input, paddingVertical: 8, paddingHorizontal: 10,
-    borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border,
+  body: {
+    flex: 1,
+    paddingHorizontal: H_PAD,
+    paddingTop: 12,
   },
-  tokenIconSmall: {
-    width: 30, height: 30, borderRadius: 15,
-    backgroundColor: Colors.bg.subtle, justifyContent: 'center', alignItems: 'center',
+  banner: {
+    backgroundColor: "rgba(110,86,207,0.08)",
+    borderRadius: R.sm,
+    padding: 12,
+    marginBottom: 12,
   },
-  tokenSelectorText:   { marginRight: 2 },
-  tokenSelectorSymbol: { fontSize: Typography.base, fontWeight: Typography.bold, color: Colors.navy },
-  tokenSelectorName:   { fontSize: Typography.xs, color: Colors.steel },
-  balanceText:         { fontSize: Typography.xs, color: Colors.steel, marginTop: 8 },
-  swapButtonContainer: { alignItems: 'center', marginVertical: -18, zIndex: 10 },
-  swapIconButton: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: Colors.white, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 3, borderColor: Colors.bg.screen, ...Shadow.card,
+  bannerTitle: {
+    ...T.smBold,
+    color: C.brand.purple,
   },
-  rateCard: {
-    backgroundColor: Colors.white, borderRadius: Radius.md, padding: Spacing.lg,
-    marginTop: Spacing.lg, gap: 10, ...Shadow.subtle,
+  bannerText: {
+    ...T.sm,
+    color: C.text.t2,
+    marginTop: 2,
   },
-  rateRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  rateLabel:   { fontSize: Typography.sm, color: Colors.steel },
-  rateValue:   { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.navy },
-  impactLow:   { color: Colors.gain },
-  impactHigh:  { color: Colors.loss },
-  dartBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.obsidian.tertiaryContainer, borderRadius: Radius.sm,
-    paddingHorizontal: 10, paddingVertical: 6, marginTop: 4,
+  slotCard: {
+    backgroundColor: C.surfaces.bgSurface,
+    borderRadius: R.md,
+    padding: 16,
   },
-  dartBadgeText: { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.obsidian.onTertiaryContainer },
-  quoteErrorCard: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-    backgroundColor: Colors.bg.input, borderRadius: Radius.md,
-    padding: Spacing.md, marginTop: Spacing.lg,
-    borderWidth: 1, borderColor: Colors.loss,
+  slotTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
   },
-  quoteErrorText: { flex: 1, fontSize: Typography.xs, color: Colors.loss, lineHeight: 18 },
-  infoCard: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-    backgroundColor: Colors.bg.input, borderRadius: Radius.md,
-    padding: Spacing.md, marginTop: Spacing.lg,
-    borderWidth: 1, borderColor: Colors.border,
+  slotTitleWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
-  infoText:              { flex: 1, fontSize: Typography.xs, color: Colors.steel, lineHeight: 18 },
-  previewButton: {
-    backgroundColor: Colors.navy, borderRadius: Radius.md,
-    paddingVertical: 15, alignItems: 'center', marginTop: Spacing.xl, ...Shadow.card,
+  slotLabel: {
+    ...T.sm,
+    color: C.text.t2,
   },
-  previewButtonDisabled: { opacity: 0.4 },
-  previewButtonText:     { fontSize: Typography.base, fontWeight: Typography.bold, color: Colors.white },
-  modalOverlay:          { flex: 1, backgroundColor: 'rgba(6,14,32,0.72)', justifyContent: 'flex-end' },
-  tokenModalContent: {
-    backgroundColor: Colors.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '72%',
+  balanceText: {
+    ...T.sm,
+    color: C.text.t2,
   },
-  tokenModalHandle: {
-    width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.divider,
-    alignSelf: 'center', marginTop: 10, marginBottom: 4,
+  slotMiddleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
-  tokenModalHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
-    borderBottomWidth: 1, borderBottomColor: Colors.divider,
+  tokenPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: C.surfaces.bgBase,
+    borderWidth: 1,
+    borderColor: C.borders.bDefault,
+    borderRadius: R.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
-  tokenModalTitle: { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.navy },
-  tokenList:       { padding: Spacing.lg },
-  tokenItem: {
-    flexDirection: 'row', alignItems: 'center',
-    padding: Spacing.md, borderRadius: Radius.md,
-    marginBottom: Spacing.sm, backgroundColor: Colors.bg.input,
+  tokenPillText: {
+    ...T.bodyMd,
+    color: C.text.t1,
   },
-  tokenIcon:   { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  tokenInfo:   { flex: 1 },
-  tokenSymbol: { fontSize: Typography.base, fontWeight: Typography.semibold, color: Colors.navy },
-  tokenName:   { fontSize: Typography.xs, color: Colors.steel },
+  amountInput: {
+    flex: 1,
+    textAlign: "right",
+    color: C.text.t1,
+    ...T.display,
+  },
+  toAmountInput: {
+    color: C.text.t2,
+  },
+  usdLine: {
+    ...T.sm,
+    color: C.text.t2,
+    textAlign: "right",
+    marginTop: 4,
+  },
+  swapDirectionWrap: {
+    alignItems: "center",
+    marginVertical: 8,
+  },
+  swapDirectionBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: R.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: C.surfaces.bgSurface,
+    borderWidth: 1,
+    borderColor: C.borders.bStrong,
+  },
+  swapDirectionText: {
+    ...T.bodyMd,
+    color: C.text.t1,
+  },
+  priceRow: {
+    marginTop: 10,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  priceRowText: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  detailsWrap: {
+    borderRadius: R.sm,
+    borderWidth: 1,
+    borderColor: C.borders.bDefault,
+    backgroundColor: C.surfaces.bgBase,
+    overflow: "hidden",
+  },
+  detailsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  detailsTitle: {
+    ...T.smBold,
+    color: C.text.t1,
+  },
+  detailsBody: {
+    borderTopWidth: 1,
+    borderTopColor: C.borders.bDefault,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  detailsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+  },
+  detailsKey: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  detailsValue: {
+    ...T.smBold,
+    color: C.text.t1,
+  },
+  detailsValueRoute: {
+    ...T.sm,
+    color: C.text.t1,
+    flex: 1,
+    textAlign: "right",
+  },
+  detailsMono: {
+    ...T.address,
+    color: C.text.t2,
+  },
+  detailAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  detailEdit: {
+    ...T.smBold,
+    color: C.brand.purple,
+  },
+  errorText: {
+    ...T.sm,
+    color: C.semantic.danger,
+    marginTop: 8,
+  },
+  footer: {
+    paddingHorizontal: H_PAD,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: C.borders.bDefault,
+    backgroundColor: C.surfaces.bgBase,
+  },
+  ctaConfirmed: {
+    backgroundColor: C.semantic.success,
+    borderColor: C.semantic.success,
+  },
+  ctaFailed: {
+    backgroundColor: C.semantic.danger,
+    borderColor: C.semantic.danger,
+  },
+  searchInputWrap: {
+    marginBottom: 8,
+  },
+  tokenListContent: {
+    paddingBottom: 30,
+  },
+  tokenRow: {
+    height: 64,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borders.bDefault,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  tokenDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  tokenMeta: {
+    flex: 1,
+  },
+  tokenRowName: {
+    ...T.bodyMd,
+    color: C.text.t1,
+  },
+  tokenRowSymbol: {
+    ...T.sm,
+    color: C.text.t2,
+    marginTop: 2,
+  },
+  tokenRowBalance: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  slippagePillsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  slippagePill: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: C.borders.bDefault,
+    borderRadius: R.full,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 8,
+    backgroundColor: C.surfaces.bgSurface,
+  },
+  slippagePillActive: {
+    backgroundColor: C.brand.black,
+    borderColor: C.brand.black,
+  },
+  slippagePillText: {
+    ...T.bodyMd,
+    color: C.text.t1,
+  },
+  slippagePillTextActive: {
+    color: C.text.tInv,
+  },
+  slippageSaveBtn: {
+    marginTop: 12,
+  },
 });
