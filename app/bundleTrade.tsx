@@ -1,686 +1,914 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import * as Haptics from 'expo-haptics';
-import React, { useEffect, useState } from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import { BottomSheetModal } from "@gorhom/bottom-sheet";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   Linking,
-  PanResponder,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
-} from 'react-native';
-import { AppNoticeAction, AppNoticeModal } from '../components/AppNoticeModal';
-import { ScreenContainer } from '../components/ScreenContainer';
-import { HapticButton } from '../components/HapticButton';
-import { InlineError } from '../components/InlineError';
-import { TxSuccessCard } from '../components/TxSuccessCard';
-import { BASKETS, Basket, basketToContractArgs, getBasket } from '../constants/baskets';
-import { Colors, Radius, Shadow, Spacing, Typography } from '../constants/theme';
-import { algorandService } from '../services/algorandService';
-import { crescaBucketService } from '../services/algorandContractServices';
-import { dartRouterService } from '../services/dartRouterService';
-import { pythOracleService } from '../services/pythOracleService';
-import { positionStore } from '../services/positionStore';
+} from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import { ScreenContainer } from "../components/ScreenContainer";
+import {
+  BASKETS,
+  Basket,
+  BasketAsset,
+  basketToContractArgs,
+  getBasket,
+} from "../constants/baskets";
+import { crescaBucketService } from "../services/algorandContractServices";
+import { algorandService } from "../services/algorandService";
+import { dartRouterService } from "../services/dartRouterService";
+import { positionStore } from "../services/positionStore";
+import { pythOracleService } from "../services/pythOracleService";
+import {
+  AssetChip,
+  CrescaInput,
+  CrescaSheet,
+  HeaderBar,
+  PrimaryButton,
+  StatusTag,
+} from "../src/components/ui";
+import { C, H_PAD, R, T } from "../src/theme";
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+const BUNDLE_PROTOCOL_APP_ID = 758849061;
 
-function formatUSD(price: number): string {
-  if (price >= 10_000) return `$${Math.round(price).toLocaleString()}`;
-  if (price >= 100)    return `$${price.toFixed(0)}`;
-  if (price >= 1)      return `$${price.toFixed(2)}`;
-  return `$${price.toFixed(3)}`;
+type TradeAction = "long" | "short";
+type TradeState =
+  | "idle"
+  | "confirming"
+  | "sign"
+  | "broadcasting"
+  | "confirmed"
+  | "failed";
+
+type ParsedParams = {
+  bundleId?: string;
+  bundleName?: string;
+  assets?: string;
+  totalValue?: string;
+};
+
+function parseNumericInput(raw: string): string {
+  const normalized = raw.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  const firstDot = normalized.indexOf(".");
+  const compact =
+    firstDot === -1
+      ? normalized
+      : `${normalized.slice(0, firstDot + 1)}${normalized
+          .slice(firstDot + 1)
+          .replace(/\./g, "")}`;
+
+  const [intPart, decimalPart] = compact.split(".");
+  if (decimalPart === undefined) return intPart;
+  return `${intPart}.${decimalPart.slice(0, 6)}`;
 }
 
-function normalizeAlgoInput(raw: string): string {
-  const replaced = raw.replace(/,/g, '.').replace(/[^0-9.]/g, '');
-  const firstDot = replaced.indexOf('.');
-  const compact = firstDot === -1
-    ? replaced
-    : `${replaced.slice(0, firstDot + 1)}${replaced.slice(firstDot + 1).replace(/\./g, '')}`;
-
-  const [intPart, decPart] = compact.split('.');
-  if (decPart === undefined) return intPart;
-  return `${intPart}.${decPart.slice(0, 6)}`; // microALGO precision
+function formatUsd(amount: number): string {
+  if (!Number.isFinite(amount)) return "$0.00";
+  if (amount >= 1000) return `$${amount.toFixed(2)}`;
+  if (amount >= 1) return `$${amount.toFixed(3)}`;
+  return `$${amount.toFixed(4)}`;
 }
 
-function parseAlgoAmount(value: string): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+function shortValue(value: number, fraction = 4): string {
+  if (!Number.isFinite(value)) return "0";
+  return value
+    .toFixed(fraction)
+    .replace(/\.0+$/, "")
+    .replace(/(\.[0-9]*?)0+$/, "$1");
 }
 
-// ─── screen ─────────────────────────────────────────────────────────────────
+function pickBundle(params: ParsedParams): Basket {
+  const byId = params.bundleId ? getBasket(params.bundleId) : undefined;
+  return byId ?? BASKETS[0];
+}
+
+function parseAssetsParam(assetsRaw: string | undefined, fallback: BasketAsset[]): BasketAsset[] {
+  if (!assetsRaw) return fallback;
+
+  try {
+    const parsed = JSON.parse(assetsRaw) as Array<
+      | string
+      | {
+          symbol?: string;
+          weight?: number;
+          asaId?: number;
+        }
+    >;
+
+    if (!Array.isArray(parsed) || parsed.length === 0) return fallback;
+
+    const fallbackBySymbol = fallback.reduce((acc, asset) => {
+      acc[asset.symbol] = asset;
+      return acc;
+    }, {} as Record<string, BasketAsset>);
+
+    const normalized = parsed
+      .map((entry) => {
+        if (typeof entry === "string") {
+          return fallbackBySymbol[entry.toUpperCase()] ?? null;
+        }
+        const symbol = String(entry.symbol ?? "").toUpperCase();
+        if (!symbol) return null;
+        const fallbackAsset = fallbackBySymbol[symbol];
+        return {
+          symbol,
+          asaId: Number(entry.asaId ?? fallbackAsset?.asaId ?? 0),
+          weight: Number(entry.weight ?? fallbackAsset?.weight ?? 0),
+        } as BasketAsset;
+      })
+      .filter((asset): asset is BasketAsset => !!asset);
+
+    if (normalized.length > 0) {
+      const sum = normalized.reduce((acc, asset) => acc + asset.weight, 0);
+      if (sum > 0 && sum !== 100) {
+        return normalized.map((asset) => ({
+          ...asset,
+          weight: Math.round((asset.weight / sum) * 100),
+        }));
+      }
+      return normalized;
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+}
 
 export default function BundleTradeScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams();
+  const params = useLocalSearchParams<ParsedParams>();
 
-  const basket: Basket =
-    getBasket(params.basketId as string) ??
-    getBasket(params.bundleId  as string) ??
-    BASKETS[0];
+  const baseBundle = pickBundle(params);
+  const assets = useMemo(
+    () => parseAssetsParam(params.assets, baseBundle.assets),
+    [params.assets, baseBundle.assets],
+  );
 
-  const { asaIds, weights } = basketToContractArgs(basket);
-  const symbols = basket.assets.map((a) => a.symbol);
+  const bundleName = params.bundleName || baseBundle.name;
+  const totalValue = Number(params.totalValue ?? 420) || 420;
+  const basketId = baseBundle.id;
 
-  const [balance,     setBalance]     = useState('0.000');
-  const [amount,      setAmount]      = useState('');
-  const [leverage,    setLeverage]    = useState(5);
-  const [direction,   setDirection]   = useState<'long' | 'short'>('long');
-  const [busy,        setBusy]        = useState(true);
-  const [bucketId,    setBucketId]    = useState<number | null>(null);
-  const [oracleAlive, setOracleAlive] = useState<boolean | null>(null);
+  const { asaIds, weights } = basketToContractArgs({ ...baseBundle, assets });
+  const symbols = assets.map((asset) => asset.symbol);
 
-  // USD prices for display
-  const [usdPrices,   setUsdPrices]   = useState<Record<string, number>>({});
-  // ALGO-denom prices for the contract
-  const [algoPrices,  setAlgoPrices]  = useState<Map<number, number>>(new Map());
+  const detailSheetRef = useRef<BottomSheetModal | null>(null);
+  const confirmSheetRef = useRef<BottomSheetModal | null>(null);
 
-  const [tradeError,  setTradeError]  = useState('');
-  const [lastTradeTxId, setLastTradeTxId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ title: string; message: string; actions?: AppNoticeAction[] } | null>(null);
-  const sliderWidthRef = React.useRef(1);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [walletAddress, setWalletAddress] = useState("");
+  const [algoBalance, setAlgoBalance] = useState(0);
 
-  const setLeverageFromX = (x: number) => {
-    const width = Math.max(1, sliderWidthRef.current);
-    const clamped = Math.max(0, Math.min(x, width));
-    const normalized = clamped / width;
-    const value = Math.round(normalized * 40); // 0x..40x
-    setLeverage(value);
-  };
+  const [amountUsdc, setAmountUsdc] = useState("");
+  const [action, setAction] = useState<TradeAction>("long");
+  const [tradeState, setTradeState] = useState<TradeState>("idle");
 
-  const panResponder = React.useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt) => {
-        setLeverageFromX(evt.nativeEvent.locationX);
-      },
-      onPanResponderMove: (evt) => {
-        setLeverageFromX(evt.nativeEvent.locationX);
-      },
-      onPanResponderRelease: () => {
-        void Haptics.selectionAsync();
-      },
-    }),
-  ).current;
+  const [allocationOpen, setAllocationOpen] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastTxId, setLastTxId] = useState<string | null>(null);
+
+  const [usdPrices, setUsdPrices] = useState<Record<string, number>>({});
+  const [algoOraclePrices, setAlgoOraclePrices] = useState<Map<number, number>>(new Map());
+  const [algoUsd, setAlgoUsd] = useState<number | null>(null);
+  const [bucketId, setBucketId] = useState<number | null>(null);
+
+  const [toggleWidth, setToggleWidth] = useState(0);
+  const toggleX = useSharedValue(0);
 
   useEffect(() => {
-    void init();
+    toggleX.value = withTiming(action === "long" ? 0 : toggleWidth / 2, { duration: 200 });
+  }, [action, toggleWidth, toggleX]);
+
+  useEffect(() => {
+    void initialize();
   }, []);
 
-  const init = async () => {
-    try {
-      await algorandService.initializeWallet();
-      const bal = await algorandService.getBalance();
-      setBalance(Number(bal.algo).toFixed(3));
+  const toggleAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: toggleX.value }],
+  }));
 
-      // Fetch display prices (USD) and contract prices (ALGO-denom) in parallel
-      const [usdResult, algoResult] = await Promise.all([
+  const initialize = async () => {
+    setIsBootstrapping(true);
+    try {
+      const wallet = await algorandService.initializeWallet();
+      setWalletAddress(wallet.address);
+
+      const [{ algo }, prices, oraclePrices, algoPrice] = await Promise.all([
+        algorandService.getBalance(),
         pythOracleService.getPrices(symbols),
         dartRouterService.getOraclePrices(asaIds),
+        pythOracleService.getPrice("ALGO"),
       ]);
 
-      const usd: Record<string, number> = {};
-      Object.entries(usdResult).forEach(([s, p]) => { usd[s] = p.price; });
-      setUsdPrices(usd);
-      setAlgoPrices(algoResult);
-      setOracleAlive(Object.keys(usd).length > 0 && algoResult.size > 0);
-    } catch {
-      setOracleAlive(false);
+      const usdMap: Record<string, number> = {};
+      Object.entries(prices).forEach(([symbol, payload]) => {
+        usdMap[symbol] = payload.price;
+      });
+
+      setUsdPrices(usdMap);
+      setAlgoOraclePrices(oraclePrices);
+      setAlgoUsd(algoPrice?.price ?? null);
+      setAlgoBalance(Number(algo));
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to initialize bundle trade screen");
     } finally {
-      setBusy(false);
+      setIsBootstrapping(false);
     }
   };
 
-  const parsedMargin = parseAlgoAmount(amount);
-  const exposure = parsedMargin * leverage;
+  const parsedAmountUsdc = Number(amountUsdc);
+  const safeAmountUsdc = Number.isFinite(parsedAmountUsdc) ? parsedAmountUsdc : 0;
+  const marginAlgo = algoUsd && algoUsd > 0 ? safeAmountUsdc / algoUsd : 0;
 
-  const handleOpen = async () => {
-    setTradeError('');
-    setLastTradeTxId(null);
-    const amt = parseAlgoAmount(amount);
+  const estimatedAssets = useMemo(() => {
+    if (safeAmountUsdc <= 0) return [];
 
-    if (amt <= 0) {
-      setTradeError('Enter a positive ALGO amount.');
+    return assets.map((asset) => {
+      const usdPrice = usdPrices[asset.symbol] ?? 0;
+      const usdSlice = (safeAmountUsdc * asset.weight) / 100;
+      const units = usdPrice > 0 ? usdSlice / usdPrice : 0;
+      return {
+        ...asset,
+        usdPrice,
+        usdSlice,
+        units,
+      };
+    });
+  }, [assets, safeAmountUsdc, usdPrices]);
+
+  const cta = useMemo(() => {
+    switch (tradeState) {
+      case "confirming":
+        return { label: "Confirming...", loading: false };
+      case "sign":
+        return { label: "Sign Transaction", loading: false };
+      case "broadcasting":
+        return { label: "Broadcasting...", loading: true };
+      case "confirmed":
+        return { label: "✓ Confirmed", loading: false };
+      case "failed":
+        return { label: "Retry", loading: false };
+      case "idle":
+      default:
+        return { label: action === "long" ? "Long Position" : "Short Position", loading: false };
+    }
+  }, [tradeState, action]);
+
+  const canProceed =
+    !isBootstrapping &&
+    safeAmountUsdc > 0 &&
+    marginAlgo > 0 &&
+    marginAlgo <= algoBalance &&
+    !!algoUsd;
+
+  const priceImpactLabel = "< 0.1%";
+  const atomicSize = `${assets.length} / 16`;
+
+  const openConfirmSheet = () => {
+    setError(null);
+
+    if (safeAmountUsdc <= 0) {
+      setError("Enter a valid USDC amount.");
+      setTradeState("failed");
       return;
     }
-    if (leverage < 1) {
-      setTradeError('Set leverage above 0x to execute a trade.');
+
+    if (!algoUsd || algoUsd <= 0) {
+      setError("ALGO oracle price unavailable.");
+      setTradeState("failed");
       return;
     }
-    if (amt > parseAlgoAmount(balance)) {
-      setTradeError('Amount exceeds your ALGO balance.');
+
+    if (marginAlgo > algoBalance) {
+      setError("Insufficient ALGO collateral for this trade size.");
+      setTradeState("failed");
       return;
     }
-    if (oracleAlive === false) {
-      setTradeError('Oracle not ready — tap Refresh then try again.');
+
+    setTradeState("confirming");
+    confirmSheetRef.current?.present();
+  };
+
+  const executeTrade = async () => {
+    setError(null);
+
+    if (!algoUsd || algoUsd <= 0) {
+      setError("ALGO oracle price unavailable.");
+      setTradeState("failed");
       return;
     }
 
     try {
-      setBusy(true);
+      setTradeState("sign");
 
       const oraclePriceMap = await dartRouterService.getOraclePrices(asaIds);
-      const oracleIds    = Array.from(oraclePriceMap.keys());
-      const oraclePrices = oracleIds.map((id) => oraclePriceMap.get(id)!);
-      await crescaBucketService.updateOracle(oracleIds, oraclePrices);
+      const oracleIds = Array.from(oraclePriceMap.keys());
+      const oracleValues = oracleIds.map((id) => oraclePriceMap.get(id) ?? 100_000_000);
+      await crescaBucketService.updateOracle(oracleIds, oracleValues);
 
-      await crescaBucketService.depositCollateral(amt);
+      setTradeState("broadcasting");
 
-      let id = bucketId;
-      if (id === null) {
-        const result = await crescaBucketService.createBucket(asaIds, weights, leverage);
-        id = result.bucketId;
-        setBucketId(id);
+      await crescaBucketService.depositCollateral(marginAlgo);
+
+      let currentBucketId = bucketId;
+      if (currentBucketId === null) {
+        const created = await crescaBucketService.createBucket(asaIds, weights, 2);
+        currentBucketId = created.bucketId;
+        setBucketId(created.bucketId);
       }
 
-      const opened = await crescaBucketService.openPosition(id, direction === 'long', amt, asaIds);
-      const url = `https://lora.algokit.io/testnet/transaction/${opened.txId}`;
-      setLastTradeTxId(opened.txId);
+      const opened = await crescaBucketService.openPosition(
+        currentBucketId,
+        action === "long",
+        marginAlgo,
+        asaIds,
+      );
 
-      // Persist the position so bucket.tsx can show P&L + close
+      setLastTxId(opened.txId);
+
       await positionStore.add({
         positionId: opened.positionId,
-        bucketId:   id,
-        basketId:   basket.id,
+        bucketId: currentBucketId,
+        basketId,
         asaIds,
-        leverage,
-        marginAlgo: amt,
-        openedAt:   Date.now(),
-        txId:       opened.txId,
+        leverage: 2,
+        marginAlgo,
+        openedAt: Date.now(),
+        txId: opened.txId,
       });
 
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      confirmSheetRef.current?.dismiss();
+      setTradeState("confirmed");
+      setAmountUsdc("");
 
-      setNotice({
-        title: 'Position Opened',
-        message: `${direction.toUpperCase()} position #${opened.positionId} opened on "${basket.name}" with ${leverage}x leverage.\nTx: ${opened.txId.slice(0, 8)}...${opened.txId.slice(-6)}\n\nYou can open the explorer link below or from this dialog.`,
-        actions: [
-          { label: 'View Tx', style: 'secondary', onPress: () => Linking.openURL(url) },
-          { label: 'Stay', style: 'secondary' },
-          { label: 'Back', style: 'primary', onPress: () => router.back() },
-        ],
-      });
+      const { algo } = await algorandService.getBalance();
+      setAlgoBalance(Number(algo));
 
-      setAmount('');
-      const bal = await algorandService.getBalance();
-      setBalance(Number(bal.algo).toFixed(3));
+      setTimeout(() => {
+        setTradeState("idle");
+      }, 2000);
     } catch (e: any) {
-      setTradeError(e?.message || 'Could not open position.');
-    } finally {
-      setBusy(false);
+      setError(e?.message ?? "Trade execution failed.");
+      setTradeState("failed");
     }
   };
 
-  if (busy && usdPrices && Object.keys(usdPrices).length === 0) {
+  if (isBootstrapping) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color={Colors.navy} />
-      </View>
+      <ScreenContainer style={styles.loaderWrap}>
+        <ActivityIndicator size="large" color={C.brand.black} />
+      </ScreenContainer>
     );
   }
 
-  const canTrade =
-    !busy &&
-    parsedMargin > 0 &&
-    parsedMargin <= parseAlgoAmount(balance) &&
-    leverage >= 1 &&
-    oracleAlive !== false;
-  const sliderPosition = (leverage / 40) * 100;
-
   return (
     <ScreenContainer style={styles.container} bottomInset={false}>
+      <HeaderBar
+        mode="title"
+        title={bundleName}
+        onBackPress={() => router.back()}
+        rightSlot={
+          <TouchableOpacity
+            onPress={() => detailSheetRef.current?.present()}
+            hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel="Open bundle details"
+          >
+            <Ionicons name="information-circle-outline" size={20} color={C.text.t1} />
+          </TouchableOpacity>
+        }
+      />
 
-      {/* ── Navigation header ── */}
-      <View style={styles.navBar}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-        >
-          <Ionicons name="arrow-back" size={22} color={Colors.navy} />
-        </TouchableOpacity>
-        <Text style={styles.navTitle} numberOfLines={1}>{basket.name}</Text>
-        <TouchableOpacity
-          onPress={() => void init()}
-          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel="Refresh prices"
-        >
-          <Ionicons name="refresh-outline" size={20} color={Colors.steel} />
-        </TouchableOpacity>
-      </View>
+      <View style={styles.content}>
+        <View style={styles.compositionCard}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.cardMutedLabel}>Bundle</Text>
+            <Text style={styles.cardAssetCount}>{assets.length} assets</Text>
+          </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.assetChipsWrap}>
+            {assets.map((asset) => (
+              <AssetChip
+                key={`${asset.asaId}-${asset.symbol}`}
+                symbol={asset.symbol}
+                networkColor={
+                  asset.symbol === "ALGO"
+                    ? C.networks.algorand
+                    : asset.symbol === "BTC"
+                    ? C.networks.bitcoin
+                    : C.networks.ethereum
+                }
+              />
+            ))}
+          </View>
 
-        {/* ── Bundle overview card ── */}
-        <View style={styles.overviewCard}>
-          <Text style={styles.overviewDesc}>{basket.description}</Text>
+          <View style={[styles.rowBetween, styles.totalValueRow]}>
+            <Text style={styles.totalValueText}>Total value: {formatUsd(totalValue)}</Text>
+            <TouchableOpacity
+              style={styles.allocToggleBtn}
+              onPress={() => setAllocationOpen((prev) => !prev)}
+              activeOpacity={0.9}
+            >
+              <Ionicons
+                name={allocationOpen ? "chevron-up" : "chevron-forward"}
+                size={16}
+                color={C.text.t2}
+              />
+            </TouchableOpacity>
+          </View>
 
-          {/* Asset composition + live USD prices */}
-          <View style={styles.pricesTable}>
-            {basket.assets.map((a, i) => {
-              const usd = usdPrices[a.symbol];
-              const isLast = i === basket.assets.length - 1;
-              return (
-                <View
-                  key={a.asaId}
-                  style={[styles.priceRow, !isLast && styles.priceRowBorder]}
-                >
-                  <View style={styles.priceLeft}>
-                    <Text style={styles.priceSym}>{a.symbol}</Text>
-                    <View style={styles.weightPill}>
-                      <Text style={styles.weightPillText}>{a.weight}%</Text>
+          {allocationOpen ? (
+            <FlatList
+              data={assets}
+              keyExtractor={(item) => `${item.symbol}-${item.asaId}`}
+              scrollEnabled={false}
+              contentContainerStyle={styles.allocationList}
+              renderItem={({ item }) => {
+                const usdSlice = (safeAmountUsdc * item.weight) / 100;
+                return (
+                  <View style={styles.allocationRow}>
+                    <View style={styles.allocationTop}>
+                      <AssetChip symbol={item.symbol} />
+                      <Text style={styles.allocationPct}>{item.weight}%</Text>
+                      <Text style={styles.allocationUsd}>{formatUsd(usdSlice)}</Text>
+                    </View>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${item.weight}%` }]} />
                     </View>
                   </View>
-                  <Text style={[styles.priceUSD, { fontVariant: ['tabular-nums'] }]}>
-                    {usd != null ? formatUSD(usd) : busy ? '…' : '—'}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
-
-          {/* Oracle status */}
-          <View style={styles.oracleRow}>
-            <View style={[
-              styles.oracleDot,
-              { backgroundColor: oracleAlive === false ? Colors.loss : oracleAlive === true ? Colors.gain : Colors.steel },
-            ]} />
-            <Text style={styles.oracleText}>
-              {oracleAlive === false
-                ? 'Oracle unavailable — tap refresh'
-                : oracleAlive === true
-                ? 'Oracle synced · Pyth Network'
-                : 'Loading oracle…'}
-            </Text>
-          </View>
+                );
+              }}
+            />
+          ) : null}
         </View>
 
-        {/* ── Margin input (compact) ── */}
-        <View style={styles.marginCard}>
-          <Text style={styles.sectionLabel}>Margin</Text>
-          <View style={styles.inputRow}>
-            <TextInput
-              value={amount}
-              onChangeText={(v) => { setAmount(normalizeAlgoInput(v)); setTradeError(''); }}
-              keyboardType="decimal-pad"
-              placeholder="0.0"
-              placeholderTextColor={Colors.text.muted}
-              style={styles.input}
-              accessibilityLabel="Enter margin amount in ALGO"
-            />
-            <View style={styles.inputCurrency}>
-              <Text style={styles.currencyText}>ALGO</Text>
-            </View>
-          </View>
-          <Text style={styles.hint}>Available: {balance} ALGO</Text>
+        <View
+          style={styles.toggleWrap}
+          onLayout={(event) => {
+            setToggleWidth(event.nativeEvent.layout.width);
+          }}
+        >
+          <Animated.View
+            style={[
+              styles.toggleIndicator,
+              { width: toggleWidth / 2 },
+              toggleAnimatedStyle,
+            ]}
+          />
           <TouchableOpacity
-            style={styles.maxBtn}
-            onPress={() => {
-              setAmount(balance);
-              setTradeError('');
-              void Haptics.selectionAsync();
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Use max available margin"
+            style={styles.toggleBtn}
+            onPress={() => setAction("long")}
+            activeOpacity={0.9}
           >
-            <Text style={styles.maxBtnText}>Use Max</Text>
+            <Text style={[styles.toggleText, action === "long" && styles.toggleTextActive]}>Long</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.toggleBtn}
+            onPress={() => setAction("short")}
+            activeOpacity={0.9}
+          >
+            <Text style={[styles.toggleText, action === "short" && styles.toggleTextActive]}>Short</Text>
           </TouchableOpacity>
         </View>
 
-        {/* ── Direction ── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Direction</Text>
-          <View style={styles.directionRow}>
-            <TouchableOpacity
-              style={[styles.directionBtn, direction === 'long' && styles.directionBtnLongActive]}
-              onPress={() => {
-                setDirection('long');
-                void Haptics.selectionAsync();
-              }}
-            >
-              <Ionicons name="trending-up" size={16} color={Colors.white} />
-              <Text style={styles.dirText}>Long</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.directionBtn, direction === 'short' && styles.directionBtnShortActive]}
-              onPress={() => {
-                setDirection('short');
-                void Haptics.selectionAsync();
-              }}
-            >
-              <Ionicons name="trending-down" size={16} color={Colors.white} />
-              <Text style={styles.dirText}>Short</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* ── Leverage (drag slider) ── */}
-        <View style={styles.section}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.sectionLabel}>Leverage</Text>
-            <Text style={styles.levValue}>{leverage}x</Text>
-          </View>
-          <View
-            style={styles.sliderTrack}
-            onLayout={(e) => {
-              sliderWidthRef.current = e.nativeEvent.layout.width;
+        <View style={styles.amountWrap}>
+          <CrescaInput
+            label="Amount (USDC)"
+            value={amountUsdc}
+            onChangeText={(value) => {
+              setAmountUsdc(parseNumericInput(value));
+              setError(null);
+              if (tradeState === "failed") setTradeState("idle");
             }}
-            {...panResponder.panHandlers}
-          >
-            <View style={[styles.sliderFill, { width: `${sliderPosition}%` }]} />
-            <View style={[styles.sliderThumb, { left: `${sliderPosition}%` }]} />
-          </View>
-          <View style={styles.sliderLabels}>
-            <Text style={styles.hint}>0x</Text>
-            <Text style={styles.hint}>40x</Text>
-          </View>
-        </View>
-
-        <InlineError message={tradeError} />
-
-        {/* ── Execute (directly below leverage) ── */}
-        <HapticButton
-          style={canTrade ? styles.cta : { ...styles.cta, ...styles.ctaDisabled }}
-          onPress={handleOpen}
-          disabled={!canTrade}
-          hapticStyle={Haptics.ImpactFeedbackStyle.Heavy}
-          accessibilityLabel={`Execute ${direction} trade with ${leverage}x leverage on ${basket.name}`}
-        >
-          {busy
-            ? <ActivityIndicator size="small" color={Colors.white} />
-            : (
-              <>
-                <Ionicons name="flash" size={18} color={Colors.white} />
-                <Text style={styles.ctaText}>Execute Trade</Text>
-              </>
-            )
-          }
-        </HapticButton>
-
-        {lastTradeTxId ? (
-          <TxSuccessCard
-            txId={lastTradeTxId}
-            onDismiss={() => setLastTradeTxId(null)}
+            keyboardType="decimal-pad"
+            placeholder="0.00"
+            inputStyle={styles.amountInput}
           />
-        ) : null}
-
-        {/* ── Order summary ── */}
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>Order Summary</Text>
-          {[
-            { label: 'Bundle',     value: basket.name },
-            { label: 'Margin',     value: `${parsedMargin.toFixed(3)} ALGO` },
-            { label: 'Leverage',   value: `${leverage}x` },
-            { label: 'Direction',  value: direction.toUpperCase(), highlight: true },
-          ].map(({ label, value, highlight }) => (
-            <View key={label} style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>{label}</Text>
-              <Text style={[styles.summaryValue, highlight && styles.highlightValue]}>{value}</Text>
-            </View>
-          ))}
-          <View style={[styles.summaryRow, styles.summaryTotalRow]}>
-            <Text style={styles.totalLabel}>Total Exposure</Text>
-            <Text style={[styles.totalValue, { fontVariant: ['tabular-nums'] }]}>
-              {exposure.toFixed(2)} ALGO
-            </Text>
+          <View style={styles.amountMetaRow}>
+            <Text style={styles.amountMetaText}>Max: $1,038.56</Text>
+            <TouchableOpacity
+              style={styles.maxBtn}
+              onPress={() => {
+                setAmountUsdc("1038.56");
+                setError(null);
+              }}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.maxBtnText}>Max</Text>
+            </TouchableOpacity>
           </View>
-        </View>
-
-        {/* ── Risk notice ── */}
-        <View style={styles.riskNotice}>
-          <Ionicons name="information-circle-outline" size={16} color={Colors.steel} />
-          <Text style={styles.riskText}>
-            Leveraged positions may result in losses exceeding your margin. Testnet only.
+          <Text style={styles.amountMetaHint}>
+            Collateral required: {shortValue(marginAlgo, 6)} ALGO · Wallet: {shortValue(algoBalance, 6)} ALGO
           </Text>
         </View>
 
-        <Text style={styles.flowHint}>
-          Update Oracle → Deposit → Create Bucket → Open Position
+        <View style={styles.atomicBadge}>
+          <Text style={styles.atomicText}>📦 Bundle size: </Text>
+          <Text style={styles.atomicNumbers}>{atomicSize}</Text>
+          <Text style={styles.atomicText}> atomic txns</Text>
+        </View>
+
+        <View style={styles.tagsRow}>
+          <StatusTag label="Leverage: 2×" variant="warning" />
+          <StatusTag label="Risk: Medium" variant="warning" />
+          <StatusTag label="Protocol: Cresca" variant="purple" />
+        </View>
+
+        <Text style={styles.priceImpactText}>Price impact: {priceImpactLabel}</Text>
+
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </View>
+
+      <View style={styles.footer}>
+        <PrimaryButton
+          label={cta.label}
+          loading={cta.loading}
+          variant="black"
+          disabled={!canProceed && tradeState !== "failed"}
+          onPress={openConfirmSheet}
+          style={[
+            action === "short" && styles.sellCta,
+            tradeState === "confirmed" && styles.confirmedCta,
+          ]}
+        />
+      </View>
+
+      <CrescaSheet
+        sheetRef={detailSheetRef}
+        snapPoints={["85%"]}
+        title={bundleName}
+      >
+        <Text style={styles.sheetSubTitle}>Bundle composition</Text>
+
+        <FlatList
+          data={assets}
+          keyExtractor={(item) => `detail-${item.symbol}-${item.asaId}`}
+          scrollEnabled={false}
+          renderItem={({ item }) => (
+            <View style={styles.detailAssetRow}>
+              <AssetChip symbol={item.symbol} />
+              <Text style={styles.detailWeight}>{item.weight}%</Text>
+              <Text style={styles.detailPrice}>{formatUsd(usdPrices[item.symbol] ?? 0)}</Text>
+            </View>
+          )}
+        />
+
+        <View style={styles.sheetDivider} />
+
+        <Text style={styles.contractMono}>
+          Bundle Protocol · App ID: {BUNDLE_PROTOCOL_APP_ID}
         </Text>
-      </ScrollView>
+        <Text style={styles.contractMono}>
+          Creation Hash: {lastTxId ? `${lastTxId.slice(0, 10)}...${lastTxId.slice(-8)}` : "4MBAKECM7X..."}
+        </Text>
 
-      <AppNoticeModal
-        visible={!!notice}
-        title={notice?.title ?? ''}
-        message={notice?.message ?? ''}
-        tone="success"
-        actions={notice?.actions}
-        onClose={() => setNotice(null)}
-      />
+        <TouchableOpacity
+          onPress={() =>
+            Linking.openURL(`https://lora.algokit.io/testnet/application/${BUNDLE_PROTOCOL_APP_ID}`)
+          }
+          activeOpacity={0.9}
+          style={styles.explorerLinkBtn}
+        >
+          <Text style={styles.explorerLink}>Open on Algorand Explorer</Text>
+        </TouchableOpacity>
+      </CrescaSheet>
 
+      <CrescaSheet
+        sheetRef={confirmSheetRef}
+        snapPoints={["60%"]}
+        title="Confirm Trade"
+      >
+        <View style={styles.confirmList}>
+          <View style={styles.confirmRow}>
+            <Text style={styles.confirmKey}>Action</Text>
+            <Text style={styles.confirmValue}>{action === "long" ? "Long" : "Short"}</Text>
+          </View>
+          <View style={styles.confirmRow}>
+            <Text style={styles.confirmKey}>Bundle</Text>
+            <Text style={styles.confirmValue}>{bundleName}</Text>
+          </View>
+          <View style={styles.confirmRow}>
+            <Text style={styles.confirmKey}>Amount</Text>
+            <Text style={styles.confirmValue}>{formatUsd(safeAmountUsdc)} USDC</Text>
+          </View>
+          <View style={styles.confirmRow}>
+            <Text style={styles.confirmKey}>Est. received</Text>
+            <Text style={styles.confirmValue}>
+              {estimatedAssets
+                .map((asset) => `${shortValue(asset.units, 4)} ${asset.symbol}`)
+                .join(" · ")}
+            </Text>
+          </View>
+          <View style={styles.confirmRow}>
+            <Text style={styles.confirmKey}>Gas</Text>
+            <Text style={styles.confirmValue}>~0.001 ALGO</Text>
+          </View>
+        </View>
+
+        <PrimaryButton
+          label="Confirm & Sign"
+          variant="teal"
+          loading={tradeState === "broadcasting"}
+          onPress={() => {
+            void executeTrade();
+          }}
+          style={styles.confirmCta}
+        />
+
+        <TouchableOpacity
+          onPress={() => {
+            confirmSheetRef.current?.dismiss();
+            if (tradeState === "confirming") setTradeState("idle");
+          }}
+          activeOpacity={0.9}
+          style={styles.cancelBtn}
+        >
+          <Text style={styles.cancelText}>Cancel</Text>
+        </TouchableOpacity>
+      </CrescaSheet>
     </ScreenContainer>
   );
 }
 
-// ─── styles ──────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.bg.screen },
-  loading:   { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.bg.screen },
-
-  // Nav
-  navBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.divider,
-  },
-  backBtn:  { width: 36, height: 36, borderRadius: Radius.sm, backgroundColor: Colors.bg.subtle, justifyContent: 'center', alignItems: 'center' },
-  navTitle: { flex: 1, textAlign: 'center', fontSize: Typography.md, fontWeight: Typography.bold, color: Colors.text.primary, marginHorizontal: Spacing.md },
-
-  content: { padding: Spacing.lg, gap: Spacing.lg, paddingBottom: 120 },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-
-  // Overview card
-  overviewCard: {
-    backgroundColor: Colors.bg.card,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-    ...Shadow.card,
-  },
-  overviewDesc: {
-    fontSize: Typography.sm,
-    color: Colors.text.secondary,
-    lineHeight: 20,
-    padding: Spacing.lg,
-    paddingBottom: Spacing.md,
-  },
-  pricesTable: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.divider,
-    marginHorizontal: Spacing.lg,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-  },
-  priceRowBorder: { borderBottomWidth: 1, borderBottomColor: Colors.divider },
-  priceLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  priceSym:   { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.text.primary, width: 42 },
-  weightPill: { backgroundColor: Colors.bg.subtle, borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 2 },
-  weightPillText: { fontSize: Typography.xs, color: Colors.text.muted, fontWeight: Typography.medium },
-  priceUSD:   { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.navy },
-
-  oracleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    padding: Spacing.lg,
-    paddingTop: Spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: Colors.divider,
-  },
-  oracleDot:  { width: 8, height: 8, borderRadius: 4 },
-  oracleText: { fontSize: Typography.xs, color: Colors.text.muted, flex: 1 },
-
-  // Section
-  section:      { gap: Spacing.sm },
-  sectionLabel: { fontSize: Typography.xs, fontWeight: Typography.bold, color: Colors.steel, textTransform: 'uppercase', letterSpacing: 0.8 },
-  levValue:     { color: Colors.navy, fontSize: Typography.base, fontWeight: Typography.bold },
-
-  // Input (compact margin card)
-  marginCard: {
-    gap: 8,
-    backgroundColor: Colors.bg.card,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.bg.card,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    minHeight: 64,
-    overflow: 'hidden',
-  },
-  input: {
+  container: {
     flex: 1,
-    fontSize: Typography.lg,
-    fontWeight: Typography.bold,
-    color: Colors.text.primary,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 0,
+    backgroundColor: C.surfaces.bgBase,
   },
-  inputCurrency: {
-    paddingHorizontal: Spacing.lg,
-    borderLeftWidth: 1,
-    borderLeftColor: Colors.border,
-    alignSelf: 'stretch',
-    justifyContent: 'center',
+  loaderWrap: {
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: C.surfaces.bgBase,
   },
-  currencyText: { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.steel },
-  hint:         { fontSize: Typography.xs, color: Colors.text.muted },
-  maxBtn: {
-    alignSelf: 'flex-end',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: Radius.full,
+  content: {
+    flex: 1,
+    paddingHorizontal: H_PAD,
+    paddingTop: 16,
+  },
+  rowBetween: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  compositionCard: {
+    backgroundColor: C.surfaces.bgSurface,
+    borderRadius: R.lg,
+    padding: 16,
+  },
+  cardMutedLabel: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  cardAssetCount: {
+    ...T.smBold,
+    color: C.text.t1,
+  },
+  assetChipsWrap: {
+    marginTop: 10,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  totalValueRow: {
+    marginTop: 12,
+  },
+  totalValueText: {
+    ...T.bodyMd,
+    color: C.text.t1,
+  },
+  allocToggleBtn: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: R.full,
+    backgroundColor: C.surfaces.bgBase,
     borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.bg.subtle,
+    borderColor: C.borders.bDefault,
   },
-  maxBtnText: { fontSize: Typography.xs, color: Colors.text.secondary, fontWeight: Typography.semibold },
-
-  // Leverage slider
-  sliderTrack: {
-    height: 30,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.bg.subtle,
+  allocationList: {
+    marginTop: 10,
+    gap: 10,
+  },
+  allocationRow: {
+    gap: 6,
+  },
+  allocationTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  allocationPct: {
+    ...T.smBold,
+    color: C.text.t1,
+  },
+  allocationUsd: {
+    ...T.sm,
+    color: C.text.t2,
+    marginLeft: "auto",
+  },
+  barTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.borders.bDefault,
+    overflow: "hidden",
+  },
+  barFill: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.brand.teal,
+  },
+  toggleWrap: {
+    marginTop: 16,
+    flexDirection: "row",
+    borderRadius: R.full,
+    backgroundColor: C.surfaces.bgSurface,
     borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-    justifyContent: 'center',
+    borderColor: C.borders.bDefault,
+    overflow: "hidden",
+    position: "relative",
   },
-  sliderFill: {
-    position: 'absolute',
+  toggleIndicator: {
+    position: "absolute",
     left: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: '#2E4D6B',
+    backgroundColor: C.brand.black,
+    borderRadius: R.full,
   },
-  sliderThumb: {
-    position: 'absolute',
-    marginLeft: -10,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: Colors.navy,
-    borderWidth: 2,
-    borderColor: Colors.bg.screen,
-  },
-  sliderLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  // Direction
-  directionRow: { flexDirection: 'row', gap: Spacing.sm },
-  directionBtn: {
+  toggleBtn: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 11,
-    borderRadius: Radius.md,
-    backgroundColor: Colors.bg.subtle,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  directionBtnLongActive: { backgroundColor: Colors.gainBg, borderColor: Colors.gain },
-  directionBtnShortActive: { backgroundColor: Colors.lossBg, borderColor: Colors.loss },
-  dirText: { fontSize: Typography.sm, fontWeight: Typography.bold, color: Colors.white },
-
-  // Summary
-  summaryCard: {
-    backgroundColor: Colors.bg.card,
-    borderRadius: Radius.xl,
+  toggleText: {
+    ...T.bodyMd,
+    color: C.text.t2,
+    zIndex: 1,
+  },
+  toggleTextActive: {
+    color: C.text.tInv,
+  },
+  amountWrap: {
+    marginTop: 12,
+  },
+  amountInput: {
+    ...T.h1,
+    textAlign: "right",
+    color: C.text.t1,
+  },
+  amountMetaRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  amountMetaText: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  amountMetaHint: {
+    ...T.sm,
+    color: C.text.t2,
+    marginTop: 6,
+  },
+  maxBtn: {
+    borderRadius: R.full,
     borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
+    borderColor: C.brand.teal,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  maxBtnText: {
+    ...T.smBold,
+    color: C.brand.teal,
+  },
+  atomicBadge: {
+    marginTop: 12,
+    borderRadius: R.sm,
+    padding: 10,
+    backgroundColor: "rgba(0,212,170,0.08)",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  atomicText: {
+    ...T.sm,
+    color: C.text.t1,
+  },
+  atomicNumbers: {
+    ...T.smBold,
+    color: C.brand.teal,
+  },
+  tagsRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  priceImpactText: {
+    ...T.sm,
+    color: C.semantic.success,
+    marginTop: 10,
+  },
+  errorText: {
+    ...T.sm,
+    color: C.semantic.danger,
+    marginTop: 8,
+  },
+  footer: {
+    paddingHorizontal: H_PAD,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: C.borders.bDefault,
+    backgroundColor: C.surfaces.bgBase,
+  },
+  sellCta: {
+    backgroundColor: C.semantic.danger,
+    borderColor: C.semantic.danger,
+  },
+  confirmedCta: {
+    backgroundColor: C.semantic.success,
+    borderColor: C.semantic.success,
+  },
+  sheetSubTitle: {
+    ...T.sm,
+    color: C.text.t2,
+    marginBottom: 8,
+  },
+  detailAssetRow: {
+    height: 56,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borders.bDefault,
+    flexDirection: "row",
+    alignItems: "center",
     gap: 10,
-    ...Shadow.subtle,
   },
-  summaryTitle:    { fontSize: Typography.sm, fontWeight: Typography.bold, color: Colors.text.primary, marginBottom: 4 },
-  summaryRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  summaryLabel:    { fontSize: Typography.sm, color: Colors.text.muted },
-  summaryValue:    { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.text.primary },
-  highlightValue:  { color: Colors.gain },
-  summaryTotalRow: { marginTop: 4, paddingTop: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.divider },
-  totalLabel:      { fontSize: Typography.base, fontWeight: Typography.semibold, color: Colors.text.primary },
-  totalValue:      { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.navy },
-
-  // Risk notice
-  riskNotice: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    padding: Spacing.md,
-    backgroundColor: Colors.bg.card,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
+  detailWeight: {
+    ...T.smBold,
+    color: C.text.t1,
   },
-  riskText: { flex: 1, fontSize: Typography.xs, color: Colors.steel, lineHeight: 18 },
-
-  // CTA
-  cta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 16,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.navy,
-    ...Shadow.card,
+  detailPrice: {
+    ...T.sm,
+    color: C.text.t2,
+    marginLeft: "auto",
   },
-  ctaDisabled: { opacity: 0.4 },
-  ctaText:     { fontSize: Typography.base, fontWeight: Typography.bold, color: Colors.white },
-
-  flowHint: {
-    fontSize: Typography.xs,
-    color: Colors.text.muted,
-    textAlign: 'center',
-    marginTop: -Spacing.sm,
+  sheetDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: C.borders.bDefault,
+    marginVertical: 12,
+  },
+  contractMono: {
+    ...T.address,
+    color: C.text.t2,
+    marginBottom: 6,
+  },
+  explorerLinkBtn: {
+    marginTop: 6,
+  },
+  explorerLink: {
+    ...T.smBold,
+    color: C.brand.teal,
+  },
+  confirmList: {
+    gap: 10,
+  },
+  confirmRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  confirmKey: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  confirmValue: {
+    ...T.smBold,
+    color: C.text.t1,
+    flex: 1,
+    textAlign: "right",
+  },
+  confirmCta: {
+    marginTop: 16,
+  },
+  cancelBtn: {
+    marginTop: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cancelText: {
+    ...T.bodyMd,
+    color: C.brand.teal,
   },
 });

@@ -1,33 +1,28 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons } from '@expo/vector-icons';
-import algosdk from 'algosdk';
-import * as Haptics from 'expo-haptics';
-import React, { useEffect, useMemo, useState } from 'react';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
+import { BottomSheetModal } from "@gorhom/bottom-sheet";
+import { useRouter } from "expo-router";
+import algosdk from "algosdk";
+import * as Haptics from "expo-haptics";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   Linking,
-  Modal,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
-} from 'react-native';
-import { AppNoticeAction, AppNoticeModal, AppNoticeTone } from '../components/AppNoticeModal';
-import Reanimated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
-import { ScreenContainer } from '../components/ScreenContainer';
-import { HapticButton } from '../components/HapticButton';
-import { InlineError } from '../components/InlineError';
-import { Anim, Colors, Radius, Shadow, Spacing, Typography } from '../constants/theme';
-import { algorandService } from '../services/algorandService';
-import { crescaCalendarService } from '../services/algorandContractServices';
-import { notificationService } from '../services/notificationService';
+} from "react-native";
+import { ScreenContainer } from "../components/ScreenContainer";
+import {
+  CONTRACT_APP_IDS,
+  crescaCalendarService,
+} from "../services/algorandContractServices";
+import { algorandService } from "../services/algorandService";
+import { notificationService } from "../services/notificationService";
+import { CrescaInput, CrescaSheet, PrimaryButton, StatusTag } from "../src/components/ui";
+import { C, H_PAD, R, S, T } from "../src/theme";
 
 type LocalSchedule = {
   id: number;
@@ -39,241 +34,382 @@ type LocalSchedule = {
   executedCount: number;
   active: boolean;
   txId?: string;
-  notificationId?: string;  // tracks the scheduled local notification
+  notificationId?: string;
 };
+
+type FrequencyOption = "once" | "daily" | "weekly" | "monthly" | "custom";
+type PaymentStatus = "pending" | "confirmed" | "failed" | "scheduled";
+type PaymentAsset = "ALGO" | "USDC" | "ASA";
+
+type CalendarCell = {
+  date: Date;
+  day: number;
+  isCurrentMonth: boolean;
+};
+
+const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const PAYMENT_ASSETS: PaymentAsset[] = ["ALGO", "USDC", "ASA"];
+const FREQUENCY_OPTIONS: Array<{ key: FrequencyOption; label: string }> = [
+  { key: "once", label: "Once" },
+  { key: "daily", label: "Daily" },
+  { key: "weekly", label: "Weekly" },
+  { key: "monthly", label: "Monthly" },
+  { key: "custom", label: "Custom" },
+];
 
 const schedulesKey = (address: string) => `calendar_schedules_${address}`;
 
-export default function CalendarScreen() {
-  const [walletAddress, setWalletAddress] = useState('');
-  const [balance, setBalance] = useState('0.000');
-  const [isLoading, setIsLoading] = useState(true);
-  const [isCreating, setIsCreating] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
+function formatAddress(address: string): string {
+  if (!address) return "";
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
 
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+function formatAmount(amount: number): string {
+  return `$${amount.toFixed(2)}`;
+}
+
+function formatDateLabel(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatDateTime(timestampSec: number): string {
+  return new Date(timestampSec * 1000).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function startOfDay(date: Date): Date {
+  const clone = new Date(date);
+  clone.setHours(0, 0, 0, 0);
+  return clone;
+}
+
+function firstDayOfMonth(date: Date): Date {
+  return startOfDay(new Date(date.getFullYear(), date.getMonth(), 1));
+}
+
+function isSameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function toUnixAtNoon(date: Date): number {
+  const d = new Date(date);
+  d.setHours(12, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
+}
+
+function sanitizeNumeric(raw: string): string {
+  const normalized = raw.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  const firstDot = normalized.indexOf(".");
+  if (firstDot === -1) return normalized;
+
+  const compact = `${normalized.slice(0, firstDot + 1)}${normalized
+    .slice(firstDot + 1)
+    .replace(/\./g, "")}`;
+  const [intPart, decimalPart] = compact.split(".");
+
+  if (decimalPart === undefined) return intPart;
+  return `${intPart}.${decimalPart.slice(0, 6)}`;
+}
+
+function frequencyLabel(schedule: LocalSchedule): string {
+  if (schedule.occurrences === 1) return "Once";
+  if (schedule.intervalSeconds === 24 * 60 * 60) return "Daily";
+  if (schedule.intervalSeconds === 7 * 24 * 60 * 60) return "Weekly";
+  if (schedule.intervalSeconds === 30 * 24 * 60 * 60) return "Monthly";
+  return `Every ${Math.max(1, Math.floor(schedule.intervalSeconds / 86400))} days`;
+}
+
+function statusFromSchedule(
+  schedule: LocalSchedule,
+  failedIds: Set<number>,
+): PaymentStatus {
+  if (failedIds.has(schedule.id)) return "failed";
+  if (!schedule.active && schedule.executedCount > 0) return "confirmed";
+  if (!schedule.active) return "failed";
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const secondsLeft = schedule.executeAt - nowSec;
+
+  if (secondsLeft <= 24 * 60 * 60) return "pending";
+  return "scheduled";
+}
+
+function tagVariantForStatus(status: PaymentStatus): "warning" | "success" | "danger" | "purple" {
+  if (status === "pending") return "warning";
+  if (status === "confirmed") return "success";
+  if (status === "failed") return "danger";
+  return "purple";
+}
+
+function statusLabel(status: PaymentStatus): string {
+  if (status === "pending") return "Pending";
+  if (status === "confirmed") return "Confirmed";
+  if (status === "failed") return "Failed";
+  return "Scheduled";
+}
+
+function buildCalendarCells(baseMonth: Date): CalendarCell[] {
+  const start = new Date(baseMonth.getFullYear(), baseMonth.getMonth(), 1);
+  const firstDow = (start.getDay() + 6) % 7;
+  const gridStart = new Date(start);
+  gridStart.setDate(start.getDate() - firstDow);
+
+  return Array.from({ length: 42 }).map((_, idx) => {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + idx);
+    return {
+      date,
+      day: date.getDate(),
+      isCurrentMonth: date.getMonth() === baseMonth.getMonth(),
+    };
+  });
+}
+
+export default function CalendarScreen() {
+  const router = useRouter();
+
+  const newPaymentSheetRef = useRef<BottomSheetModal | null>(null);
+  const paymentDetailSheetRef = useRef<BottomSheetModal | null>(null);
+  const frequencySheetRef = useRef<BottomSheetModal | null>(null);
+  const startDateSheetRef = useRef<BottomSheetModal | null>(null);
+
+  const [walletAddress, setWalletAddress] = useState("");
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const [monthDate, setMonthDate] = useState(startOfDay(new Date()));
+  const [selectedDate, setSelectedDate] = useState(startOfDay(new Date()));
+
   const [schedules, setSchedules] = useState<LocalSchedule[]>([]);
   const [chainCount, setChainCount] = useState<number | null>(null);
+  const [failedScheduleIds, setFailedScheduleIds] = useState<number[]>([]);
 
-  // Inline validation errors for create form
-  const [recipientError, setRecipientError] = useState('');
-  const [amountError, setAmountError] = useState('');
+  const [selectedSchedule, setSelectedSchedule] = useState<LocalSchedule | null>(null);
 
-  // Animated bottom sheet for create modal
-  const sheetY = useSharedValue(800);
-  const sheetOpacity = useSharedValue(0);
+  const [recipientInput, setRecipientInput] = useState("");
+  const [amountInput, setAmountInput] = useState("");
+  const [selectedAsset, setSelectedAsset] = useState<PaymentAsset>("ALGO");
+  const [frequency, setFrequency] = useState<FrequencyOption>("weekly");
+  const [frequencyDraft, setFrequencyDraft] = useState<FrequencyOption>("weekly");
+  const [customDaysInput, setCustomDaysInput] = useState("7");
+  const [startDate, setStartDate] = useState(startOfDay(new Date()));
+  const [startDateDraft, setStartDateDraft] = useState(startOfDay(new Date()));
+  const [startDateMonth, setStartDateMonth] = useState(firstDayOfMonth(new Date()));
 
-  const sheetAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: sheetY.value }],
-    opacity: sheetOpacity.value,
-  }));
+  const [formError, setFormError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<{ tone: "error" | "success"; message: string } | null>(null);
 
-  const scrimAnimStyle = useAnimatedStyle(() => ({
-    opacity: sheetOpacity.value,
-  }));
+  const failedIdSet = useMemo(() => new Set(failedScheduleIds), [failedScheduleIds]);
 
-  const openSheet = () => {
-    setShowCreateModal(true);
-    sheetOpacity.value = withTiming(1, { duration: Anim.fast });
-    sheetY.value = withSpring(0, Anim.springModal);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
+  const calendarCells = useMemo(() => buildCalendarCells(monthDate), [monthDate]);
+  const startDateCells = useMemo(() => buildCalendarCells(startDateMonth), [startDateMonth]);
 
-  const closeSheet = () => {
-    sheetOpacity.value = withTiming(0, { duration: Anim.fast });
-    sheetY.value = withTiming(700, { duration: Anim.fast });
-    setTimeout(() => setShowCreateModal(false), Anim.fast);
-  };
+  const activeSchedules = useMemo(
+    () => schedules.filter((schedule) => schedule.active),
+    [schedules],
+  );
 
-  const [recipientAddress, setRecipientAddress] = useState('');
-  const [amount, setAmount] = useState('');
-  const [intervalDays, setIntervalDays] = useState('7');
-  const [selectedHour, setSelectedHour] = useState('12');
-  const [selectedMinute, setSelectedMinute] = useState('00');
-  const [selectedPeriod, setSelectedPeriod] = useState<'AM' | 'PM'>('PM');
-  const [notice, setNotice] = useState<{
-    title: string;
-    message: string;
-    tone: AppNoticeTone;
-    actions?: AppNoticeAction[];
-  } | null>(null);
+  const upcomingSchedule = useMemo(() => {
+    const now = Math.floor(Date.now() / 1000);
+    return activeSchedules
+      .filter((schedule) => schedule.executeAt >= now)
+      .sort((a, b) => a.executeAt - b.executeAt)[0];
+  }, [activeSchedules]);
 
-  useEffect(() => {
-    void initialize();
+  const daySchedules = useMemo(() => {
+    return schedules
+      .filter((schedule) =>
+        isSameDay(new Date(schedule.executeAt * 1000), selectedDate),
+      )
+      .sort((a, b) => a.executeAt - b.executeAt);
+  }, [schedules, selectedDate]);
+
+  const dayTitle = useMemo(() => {
+    const today = startOfDay(new Date());
+    const prefix = isSameDay(today, selectedDate) ? "Today" : selectedDate.toLocaleDateString("en-US", { weekday: "long" });
+    return `${prefix} · ${formatDateLabel(selectedDate)}`;
+  }, [selectedDate]);
+
+  const requestRefreshWallet = useCallback(async () => {
+    const balance = await algorandService.getBalance();
+    setWalletBalance(Number(balance.algo) || 0);
   }, []);
 
-  const activeSchedules = useMemo(() => schedules.filter((s) => s.active), [schedules]);
+  const loadLocalSchedules = useCallback(async (address: string) => {
+    const raw = await AsyncStorage.getItem(schedulesKey(address));
+    const parsed = raw ? (JSON.parse(raw) as LocalSchedule[]) : [];
+    setSchedules(parsed);
+  }, []);
 
-  const initialize = async () => {
-    try {
-      const wallet = await algorandService.initializeWallet();
-      const bal = await algorandService.getBalance();
+  const persistSchedules = useCallback(
+    async (next: LocalSchedule[]) => {
+      setSchedules(next);
+      if (!walletAddress) return;
+      await AsyncStorage.setItem(schedulesKey(walletAddress), JSON.stringify(next));
+    },
+    [walletAddress],
+  );
 
-      setWalletAddress(wallet.address);
-      setBalance(parseFloat(bal.algo).toFixed(3));
-
-      await loadLocalSchedules(wallet.address);
-      await refreshOnChainCount(wallet.address);
-    } catch (error) {
-      console.error('Calendar init error:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const loadLocalSchedules = async (address: string) => {
-    try {
-      const raw = await AsyncStorage.getItem(schedulesKey(address));
-      setSchedules(raw ? (JSON.parse(raw) as LocalSchedule[]) : []);
-    } catch (error) {
-      console.warn('Failed to load local schedules:', error);
-      setSchedules([]);
-    }
-  };
-
-  const persistSchedules = async (next: LocalSchedule[]) => {
-    setSchedules(next);
-    if (!walletAddress) return;
-    await AsyncStorage.setItem(String(schedulesKey(walletAddress)), String(JSON.stringify(next)));
-  };
-
-  const refreshOnChainCount = async (address: string) => {
+  const refreshChainCount = useCallback(async (address: string) => {
     try {
       const count = await crescaCalendarService.getUserScheduleCount(address);
       setChainCount(count);
-    } catch (error) {
-      console.warn('Could not fetch on-chain schedule count:', error);
+    } catch {
+      setChainCount(null);
     }
+  }, []);
+
+  const initialize = useCallback(async () => {
+    setIsLoading(true);
+    setBanner(null);
+
+    try {
+      const wallet = await algorandService.initializeWallet();
+      setWalletAddress(wallet.address);
+      await Promise.all([
+        requestRefreshWallet(),
+        loadLocalSchedules(wallet.address),
+        refreshChainCount(wallet.address),
+        notificationService.requestPermissions(),
+      ]);
+    } catch (error: any) {
+      setBanner({ tone: "error", message: error?.message ?? "Failed to initialize calendar" });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [loadLocalSchedules, refreshChainCount, requestRefreshWallet]);
+
+  useEffect(() => {
+    void initialize();
+  }, [initialize]);
+
+  const hasScheduledPayment = (date: Date) => {
+    return activeSchedules.some((schedule) =>
+      isSameDay(new Date(schedule.executeAt * 1000), date),
+    );
   };
 
-  const formatAddress = (address: string) =>
-    address ? `${address.substring(0, 6)}...${address.substring(address.length - 4)}` : '';
+  const openNewPaymentSheet = () => {
+    const initialStartDate = startOfDay(selectedDate);
 
-  const formatDateTime = (timestamp: number) =>
-    new Date(timestamp * 1000).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-
-  const getDaysInMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  const getFirstDayOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1).getDay();
-
-  const renderCalendarDays = () => {
-    const daysInMonth = getDaysInMonth(currentDate);
-    const firstDay = getFirstDayOfMonth(currentDate);
-    const days: { day: number; isCurrentMonth: boolean; date: Date }[] = [];
-
-    const prevMonthDays = getDaysInMonth(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
-    for (let i = firstDay - 1; i >= 0; i -= 1) {
-      days.push({
-        day: prevMonthDays - i,
-        isCurrentMonth: false,
-        date: new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, prevMonthDays - i),
-      });
-    }
-
-    for (let i = 1; i <= daysInMonth; i += 1) {
-      days.push({
-        day: i,
-        isCurrentMonth: true,
-        date: new Date(currentDate.getFullYear(), currentDate.getMonth(), i),
-      });
-    }
-
-    const remainingDays = 42 - days.length;
-    for (let i = 1; i <= remainingDays; i += 1) {
-      days.push({
-        day: i,
-        isCurrentMonth: false,
-        date: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, i),
-      });
-    }
-
-    return days;
+    setBanner(null);
+    setFormError(null);
+    setRecipientInput("");
+    setAmountInput("");
+    setSelectedAsset("ALGO");
+    setFrequency("weekly");
+    setFrequencyDraft("weekly");
+    setCustomDaysInput("7");
+    setStartDate(initialStartDate);
+    setStartDateDraft(initialStartDate);
+    setStartDateMonth(firstDayOfMonth(initialStartDate));
+    newPaymentSheetRef.current?.present();
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const isToday = (date: Date) => {
-    const now = new Date();
-    return now.getDate() === date.getDate() && now.getMonth() === date.getMonth() && now.getFullYear() === date.getFullYear();
-  };
-
-  const hasScheduledPayment = (date: Date) =>
-    activeSchedules.some((s) => {
-      const d = new Date(s.executeAt * 1000);
-      return d.getDate() === date.getDate() && d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear();
-    });
-
-  const to24hHour = (hour12: number, period: 'AM' | 'PM') => {
-    if (period === 'AM') return hour12 === 12 ? 0 : hour12;
-    return hour12 === 12 ? 12 : hour12 + 12;
+  const openDetailSheet = (schedule: LocalSchedule) => {
+    setSelectedSchedule(schedule);
+    paymentDetailSheetRef.current?.present();
+    void Haptics.selectionAsync();
   };
 
   const handleCreateSchedule = async () => {
-    setRecipientError('');
-    setAmountError('');
+    setFormError(null);
+    setBanner(null);
 
-    let hasError = false;
-
-    if (!recipientAddress.trim() || !algosdk.isValidAddress(recipientAddress.trim())) {
-      setRecipientError('Enter a valid Algorand address.');
-      hasError = true;
-    }
-
-    const amountNum = parseFloat(amount);
-    const daysNum = parseInt(intervalDays, 10);
-    if (!amount || !Number.isFinite(amountNum) || amountNum <= 0) {
-      setAmountError('Enter a valid amount greater than 0.');
-      hasError = true;
-    }
-
-    if (!selectedDate) {
-      setAmountError((prev) => prev || 'Select a date before scheduling.');
-      hasError = true;
-    }
-
-    if (hasError) return;
-
-    const hourNum = Math.max(1, Math.min(12, parseInt(selectedHour || '12', 10) || 12));
-    const minuteNum = Math.max(0, Math.min(59, parseInt(selectedMinute || '0', 10) || 0));
-    const executionDate = new Date(selectedDate!);
-    executionDate.setHours(to24hHour(hourNum, selectedPeriod), minuteNum, 0, 0);
-
-    const executeAt = Math.floor(executionDate.getTime() / 1000);
-    if (executeAt <= Math.floor(Date.now() / 1000)) {
-      setAmountError('Execution time must be in the future.');
+    if (!recipientInput.trim() || !algosdk.isValidAddress(recipientInput.trim())) {
+      setFormError("Enter a valid Algorand address");
       return;
     }
 
+    const amount = Number(amountInput);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setFormError("Enter a valid amount");
+      return;
+    }
+
+    if (selectedAsset !== "ALGO") {
+      setFormError("Current contract flow supports ALGO schedules only");
+      return;
+    }
+
+    const startTs = toUnixAtNoon(startDate);
+    if (startTs <= Math.floor(Date.now() / 1000)) {
+      setFormError("Start date must be in the future");
+      return;
+    }
+
+    let intervalSeconds = 7 * 24 * 60 * 60;
+    let occurrences = 12;
+
+    if (frequency === "once") {
+      intervalSeconds = 0;
+      occurrences = 1;
+    } else if (frequency === "daily") {
+      intervalSeconds = 24 * 60 * 60;
+      occurrences = 30;
+    } else if (frequency === "weekly") {
+      intervalSeconds = 7 * 24 * 60 * 60;
+      occurrences = 12;
+    } else if (frequency === "monthly") {
+      intervalSeconds = 30 * 24 * 60 * 60;
+      occurrences = 12;
+    } else {
+      const customDays = Number(customDaysInput);
+      if (!Number.isFinite(customDays) || customDays <= 0) {
+        setFormError("Enter valid custom interval days");
+        return;
+      }
+      intervalSeconds = Math.floor(customDays) * 24 * 60 * 60;
+      occurrences = 12;
+    }
+
     try {
-      setIsCreating(true);
+      setIsSubmitting(true);
 
-      const intervalSeconds = (daysNum > 0 ? daysNum : 7) * 24 * 60 * 60;
-      const occurrences = 12;
-
-      const result = await crescaCalendarService.createSchedule(
-        recipientAddress.trim(),
-        amountNum,
-        executeAt,
-        intervalSeconds,
-        occurrences,
-      );
+      const result =
+        frequency === "once"
+          ? await crescaCalendarService.createOneTimePayment(
+              recipientInput.trim(),
+              amount,
+              startTs,
+            )
+          : await crescaCalendarService.createSchedule(
+              recipientInput.trim(),
+              amount,
+              startTs,
+              intervalSeconds,
+              occurrences,
+            );
 
       const notificationId = await notificationService.schedulePaymentNotification({
         scheduleId: result.scheduleId,
-        recipient:  recipientAddress.trim(),
-        amountAlgo: amountNum,
-        executeAt,
+        recipient: recipientInput.trim(),
+        amountAlgo: amount,
+        executeAt: startTs,
       });
 
-      const nextLocal: LocalSchedule = {
+      const nextSchedule: LocalSchedule = {
         id: result.scheduleId,
-        recipient: recipientAddress.trim(),
-        amount: amountNum,
-        executeAt,
+        recipient: recipientInput.trim(),
+        amount,
+        executeAt: startTs,
         intervalSeconds,
         occurrences,
         executedCount: 0,
@@ -282,535 +418,991 @@ export default function CalendarScreen() {
         notificationId,
       };
 
-      await persistSchedules([nextLocal, ...schedules]);
-      await refreshOnChainCount(walletAddress);
+      const next = [nextSchedule, ...schedules];
+      await persistSchedules(next);
+      await refreshChainCount(walletAddress);
+      await requestRefreshWallet();
 
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      closeSheet();
-
-      setRecipientAddress('');
-      setAmount('');
-      setIntervalDays('7');
-      setSelectedHour('12');
-      setSelectedMinute('00');
-      setSelectedPeriod('PM');
-
-      const bal = await algorandService.getBalance();
-      setBalance(parseFloat(bal.algo).toFixed(3));
+      setBanner({ tone: "success", message: "Payment schedule created" });
+      newPaymentSheetRef.current?.dismiss();
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error: any) {
-      setAmountError(error?.message || 'Failed to create schedule. Please try again.');
+      setFormError(error?.message ?? "Failed to create schedule");
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
-      setIsCreating(false);
+      setIsSubmitting(false);
     }
   };
 
-  const handleExecuteSchedule = async (scheduleId: number) => {
+  const handleExecuteSchedule = async (schedule: LocalSchedule) => {
     try {
-      const schedule = schedules.find((s) => s.id === scheduleId);
+      setIsExecuting(true);
+      setBanner(null);
+
       const txId = await crescaCalendarService.executeSchedule(
         walletAddress,
-        scheduleId,
-        schedule?.recipient,
+        schedule.id,
+        schedule.recipient,
       );
-      const explorerUrl = `https://lora.algokit.io/testnet/transaction/${txId}`;
 
-      // Cancel the notification that fired (or was pending) for this execution
-      await notificationService.cancelNotification(schedule?.notificationId);
+      await notificationService.cancelNotification(schedule.notificationId);
 
       const next = await Promise.all(
-        schedules.map(async (s) => {
-          if (s.id !== scheduleId) return s;
-          const nextExecuted = Math.min(s.executedCount + 1, s.occurrences);
-          const stillActive  = nextExecuted < s.occurrences;
-          const nextExecuteAt = s.executeAt + s.intervalSeconds;
+        schedules.map(async (entry) => {
+          if (entry.id !== schedule.id) return entry;
 
-          // Schedule notification for the next occurrence if still active
+          const nextExecuted = Math.min(entry.executedCount + 1, entry.occurrences);
+          const stillActive = nextExecuted < entry.occurrences;
+          const nextExecuteAt =
+            entry.intervalSeconds > 0
+              ? entry.executeAt + entry.intervalSeconds
+              : entry.executeAt;
+
           let nextNotificationId: string | undefined;
           if (stillActive) {
             nextNotificationId = await notificationService.rescheduleNextNotification({
-              scheduleId: s.id,
-              recipient:  s.recipient,
-              amountAlgo: s.amount,
-              executeAt:  nextExecuteAt,
+              scheduleId: entry.id,
+              recipient: entry.recipient,
+              amountAlgo: entry.amount,
+              executeAt: nextExecuteAt,
             });
           }
 
           return {
-            ...s,
-            executedCount:  nextExecuted,
-            active:         stillActive,
-            executeAt:      nextExecuteAt,
+            ...entry,
+            txId,
+            executedCount: nextExecuted,
+            active: stillActive,
+            executeAt: stillActive ? nextExecuteAt : entry.executeAt,
             notificationId: nextNotificationId,
           };
         }),
       );
 
       await persistSchedules(next);
+      await requestRefreshWallet();
 
-      setNotice({
-        title: 'Payment Executed',
-        message: `Schedule #${scheduleId} executed.`,
-        tone: 'success',
-        actions: [
-          { label: 'View Tx', style: 'secondary', onPress: () => Linking.openURL(explorerUrl) },
-          { label: 'OK', style: 'primary' },
-        ],
-      });
-
-      const bal = await algorandService.getBalance();
-      setBalance(parseFloat(bal.algo).toFixed(3));
+      setFailedScheduleIds((prev) => prev.filter((id) => id !== schedule.id));
+      setBanner({ tone: "success", message: `Payment executed · ${txId.slice(0, 8)}...` });
+      paymentDetailSheetRef.current?.dismiss();
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error: any) {
-      setNotice({
-        title: 'Execute Failed',
-        message: error?.message || 'Failed to execute payment',
-        tone: 'error',
-      });
+      setFailedScheduleIds((prev) => Array.from(new Set([...prev, schedule.id])));
+      setBanner({ tone: "error", message: error?.message ?? "Failed to execute schedule" });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setIsExecuting(false);
     }
   };
 
-  const handleCancelSchedule = async (scheduleId: number) => {
-    setNotice({
-      title: 'Cancel Schedule',
-      message: `Cancel schedule #${scheduleId}?`,
-      tone: 'info',
-      actions: [
-        { label: 'No', style: 'secondary' },
-        {
-          label: 'Yes, Cancel',
-          style: 'danger',
-          onPress: async () => {
-            try {
-              const schedule = schedules.find((s) => s.id === scheduleId);
-              const txId = await crescaCalendarService.cancelSchedule(scheduleId);
-              const explorerUrl = `https://lora.algokit.io/testnet/transaction/${txId}`;
+  const handleCancelSchedule = async (schedule: LocalSchedule) => {
+    try {
+      setIsCancelling(true);
+      setBanner(null);
 
-              await notificationService.cancelNotification(schedule?.notificationId);
+      await crescaCalendarService.cancelSchedule(schedule.id);
+      await notificationService.cancelNotification(schedule.notificationId);
 
-              const next = schedules.map((s) =>
-                s.id === scheduleId ? { ...s, active: false, notificationId: undefined } : s,
-              );
-              await persistSchedules(next);
+      const next = schedules.map((entry) =>
+        entry.id === schedule.id
+          ? { ...entry, active: false, notificationId: undefined }
+          : entry,
+      );
 
-              setNotice({
-                title: 'Schedule Cancelled',
-                message: `Schedule #${scheduleId} cancelled.`,
-                tone: 'success',
-                actions: [
-                  { label: 'View Tx', style: 'secondary', onPress: () => Linking.openURL(explorerUrl) },
-                  { label: 'OK', style: 'primary' },
-                ],
-              });
-            } catch (error: any) {
-              setNotice({
-                title: 'Cancel Failed',
-                message: error?.message || 'Failed to cancel schedule',
-                tone: 'error',
-              });
-            }
-          },
-        },
-      ],
-    });
+      await persistSchedules(next);
+      paymentDetailSheetRef.current?.dismiss();
+      setBanner({ tone: "success", message: "Payment schedule cancelled" });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error: any) {
+      setFailedScheduleIds((prev) => Array.from(new Set([...prev, schedule.id])));
+      setBanner({ tone: "error", message: error?.message ?? "Failed to cancel schedule" });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setIsCancelling(false);
+    }
   };
+
+  const renderCalendarDay = (cell: CalendarCell) => {
+    const today = startOfDay(new Date());
+    const dayIsToday = isSameDay(cell.date, today);
+    const selected = isSameDay(cell.date, selectedDate);
+    const hasDot = hasScheduledPayment(cell.date);
+
+    return (
+      <TouchableOpacity
+        key={`${cell.date.toISOString()}-day`}
+        style={styles.dayCellWrap}
+        onPress={() => {
+          setSelectedDate(startOfDay(cell.date));
+          void Haptics.selectionAsync();
+        }}
+      >
+        <View
+          style={[
+            styles.dayCircle,
+            dayIsToday && styles.dayToday,
+            selected && styles.daySelected,
+          ]}
+        >
+          <Text
+            style={[
+              styles.dayText,
+              !cell.isCurrentMonth && styles.dayTextOut,
+              dayIsToday && styles.dayTextToday,
+              selected && styles.dayTextSelected,
+            ]}
+          >
+            {cell.day}
+          </Text>
+        </View>
+        {hasDot ? <View style={styles.dayDot} /> : null}
+      </TouchableOpacity>
+    );
+  };
+
+  const renderPaymentRow = ({ item }: { item: LocalSchedule }) => {
+    const status = statusFromSchedule(item, failedIdSet);
+    const initials = item.recipient.slice(0, 2).toUpperCase();
+
+    return (
+      <TouchableOpacity style={styles.paymentRow} onPress={() => openDetailSheet(item)}>
+        <View style={styles.paymentAvatar}>
+          <Text style={styles.paymentAvatarText}>{initials}</Text>
+        </View>
+
+        <View style={styles.paymentMid}>
+          <Text style={styles.paymentName}>Payment to {formatAddress(item.recipient)}</Text>
+          <Text style={styles.paymentDesc}>{frequencyLabel(item)} · {formatDateTime(item.executeAt)}</Text>
+        </View>
+
+        <View style={styles.paymentRight}>
+          <Text style={styles.paymentAmount}>{formatAmount(item.amount)}</Text>
+          <StatusTag label={statusLabel(status)} variant={tagVariantForStatus(status)} />
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const daysUntilUpcoming = useMemo(() => {
+    if (!upcomingSchedule) return null;
+    const now = Date.now();
+    const target = upcomingSchedule.executeAt * 1000;
+    return Math.max(0, Math.ceil((target - now) / (24 * 60 * 60 * 1000)));
+  }, [upcomingSchedule]);
 
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.navy} />
-      </View>
+      <ScreenContainer style={styles.container}>
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator size="large" color={C.brand.teal} />
+          <Text style={styles.loadingText}>Loading scheduled payments...</Text>
+        </View>
+      </ScreenContainer>
     );
   }
 
   return (
     <ScreenContainer style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Calendar Payments</Text>
-          <Text style={styles.walletId}>{formatAddress(walletAddress)} · {balance} ALGO</Text>
-        </View>
+      <View style={styles.headerRow}>
+        <TouchableOpacity style={styles.headerIconBtn} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={20} color={C.text.t1} />
+        </TouchableOpacity>
+
+        <Text style={styles.headerTitle}>Scheduled Payments</Text>
+
+        <TouchableOpacity style={styles.newBtn} onPress={openNewPaymentSheet}>
+          <Ionicons name="add" size={14} color={C.text.t1} />
+          <Text style={styles.newBtnText}>New</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.calendarContainer}>
-          <View style={styles.monthNavigation}>
-            <Text style={styles.monthYear}>{currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
-            <View style={styles.navigationButtons}>
-              <TouchableOpacity onPress={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))} style={styles.navButton}>
-                <Ionicons name="chevron-back" size={18} color={Colors.navy} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setCurrentDate(new Date())} style={styles.todayButton}>
-                <Text style={styles.todayText}>Today</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))} style={styles.navButton}>
-                <Ionicons name="chevron-forward" size={18} color={Colors.navy} />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.weekDays}>
-            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
-              <View key={`${day}-${index}`} style={styles.weekDay}>
-                <Text style={styles.weekDayText}>{day}</Text>
-              </View>
-            ))}
-          </View>
-
-          <View style={styles.calendarGrid}>
-            {renderCalendarDays().map((item, index) => (
-              <TouchableOpacity
-                key={`${item.day}-${index}`}
-                style={[styles.calendarDay, !item.isCurrentMonth && styles.calendarDayInactive, isToday(item.date) && styles.calendarDayToday]}
-                onPress={() => {
-                  setSelectedDate(item.date);
-                  void Haptics.selectionAsync();
-                  openSheet();
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`${item.day} ${currentDate.toLocaleString('default', { month: 'long' })}${hasScheduledPayment(item.date) ? ', has scheduled payment' : ''}`}
-                accessibilityState={{ selected: selectedDate?.toDateString() === item.date.toDateString() }}
-              >
-                <Text style={[styles.calendarDayText, !item.isCurrentMonth && styles.calendarDayTextInactive, isToday(item.date) && styles.calendarDayTextToday]}>
-                  {item.day}
-                </Text>
-                {hasScheduledPayment(item.date) ? <View style={styles.scheduleDot} /> : null}
-              </TouchableOpacity>
-            ))}
-          </View>
+      {banner ? (
+        <View style={[styles.banner, banner.tone === "error" ? styles.bannerError : styles.bannerSuccess]}>
+          <Text style={[styles.bannerText, banner.tone === "error" ? styles.bannerTextError : styles.bannerTextSuccess]}>
+            {banner.message}
+          </Text>
         </View>
+      ) : null}
 
-        <View style={styles.schedulesListContainer}>
-          <View style={styles.titleRow}>
-            <Text style={styles.schedulesListTitle}>Scheduled Payments</Text>
-            <Text style={styles.chainCount}>On-chain: {chainCount ?? '-'}</Text>
-          </View>
+      <View style={styles.monthNavRow}>
+        <TouchableOpacity
+          style={styles.monthArrow}
+          onPress={() => setMonthDate(new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1))}
+        >
+          <Ionicons name="chevron-back" size={18} color={C.text.t1} />
+        </TouchableOpacity>
 
-          {schedules.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="calendar-outline" size={56} color={Colors.sky} />
-              <Text style={styles.emptyTitle}>No schedules yet</Text>
-              <Text style={styles.emptyText}>Tap any date to create your first recurring payment.</Text>
-            </View>
-          ) : (
-            schedules.map((schedule) => (
-              <View key={schedule.id} style={styles.scheduleCard}>
-                <View style={styles.scheduleHeader}>
-                  <Text style={styles.scheduleAmount}>{schedule.amount.toFixed(4)} ALGO</Text>
-                  <View style={[styles.statusBadge, schedule.active ? styles.statusActive : styles.statusInactive]}>
-                    <Text style={styles.statusText}>{schedule.active ? 'Active' : 'Inactive'}</Text>
-                  </View>
-                </View>
+        <Text style={styles.monthTitle}>
+          {monthDate.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+        </Text>
 
-                <Text style={styles.scheduleRecipient}>To: {formatAddress(schedule.recipient)}</Text>
-                <Text style={styles.scheduleMeta}>Next: {formatDateTime(schedule.executeAt)}</Text>
-                <Text style={styles.scheduleMeta}>Every {Math.floor(schedule.intervalSeconds / 86400)} days · {schedule.executedCount}/{schedule.occurrences}</Text>
+        <TouchableOpacity
+          style={styles.monthArrow}
+          onPress={() => setMonthDate(new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1))}
+        >
+          <Ionicons name="chevron-forward" size={18} color={C.text.t1} />
+        </TouchableOpacity>
+      </View>
 
-                <View style={styles.scheduleActions}>
-                  {schedule.active ? (
-                    <>
-                      <TouchableOpacity style={[styles.actionButton, styles.actionButtonPrimary]} onPress={() => handleExecuteSchedule(schedule.id)}>
-                        <Text style={styles.actionButtonTextPrimary}>Execute</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={() => handleCancelSchedule(schedule.id)}>
-                        <Text style={styles.actionButtonText}>Cancel</Text>
-                      </TouchableOpacity>
-                    </>
-                  ) : (
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.actionButtonSecondary, { flex: 1 }]}
-                      onPress={() => persistSchedules(schedules.filter((s) => s.id !== schedule.id))}
-                    >
-                      <Text style={styles.actionButtonText}>Remove</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            ))
-          )}
+      <View style={styles.weekHeaderRow}>
+        {WEEK_DAYS.map((label) => (
+          <Text key={label} style={styles.weekHeaderText}>{label}</Text>
+        ))}
+      </View>
+
+      <View style={styles.calendarGrid}>{calendarCells.map(renderCalendarDay)}</View>
+
+      {upcomingSchedule && daysUntilUpcoming !== null ? (
+        <View style={styles.upcomingCard}>
+          <Text style={styles.upcomingLead}>⏰ Next payment in {daysUntilUpcoming} day{daysUntilUpcoming === 1 ? "" : "s"}</Text>
+          <Text style={styles.upcomingTitle}>{formatAmount(upcomingSchedule.amount)} ALGO → {formatAddress(upcomingSchedule.recipient)}</Text>
+          <Text style={styles.upcomingDate}>{formatDateLabel(new Date(upcomingSchedule.executeAt * 1000))}</Text>
         </View>
-      </ScrollView>
+      ) : null}
 
-      {/* Animated bottom sheet — replaces Modal */}
-      {showCreateModal && (
-        <>
-          <Reanimated.View style={[styles.scrim, scrimAnimStyle]}>
-            <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSheet} />
-          </Reanimated.View>
-          <Reanimated.View style={[styles.sheet, sheetAnimStyle]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Create Schedule</Text>
-              <TouchableOpacity
-                onPress={closeSheet}
-                accessibilityRole="button"
-                accessibilityLabel="Close create schedule sheet"
-                hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
-              >
-                <Ionicons name="close" size={22} color={Colors.navy} />
-              </TouchableOpacity>
-            </View>
+      <View style={styles.sectionHeadRow}>
+        <Text style={styles.sectionHeadTitle}>{dayTitle}</Text>
+        <Text style={styles.chainCountText}>On-chain: {chainCount ?? "-"}</Text>
+      </View>
 
-            <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
-              {selectedDate ? (
-                <View style={styles.selectedDateCard}>
-                  <Ionicons name="calendar" size={18} color={Colors.navy} />
-                  <Text style={styles.selectedDateText}>{selectedDate.toDateString()}</Text>
-                </View>
-              ) : null}
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Recipient</Text>
-                <TextInput
-                  style={styles.input}
-                  value={recipientAddress}
-                  onChangeText={(v) => { setRecipientAddress(v); setRecipientError(''); }}
-                  placeholder="Algorand address"
-                  placeholderTextColor={Colors.sky}
-                  autoCapitalize="none"
-                  accessibilityLabel="Recipient Algorand address"
-                />
-                <InlineError message={recipientError} />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Amount (ALGO)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={amount}
-                  onChangeText={(v) => { setAmount(v); setAmountError(''); }}
-                  placeholder="0.0"
-                  placeholderTextColor={Colors.sky}
-                  keyboardType="decimal-pad"
-                  accessibilityLabel="Amount in ALGO"
-                />
-                <InlineError message={amountError} />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Repeat every (days)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={intervalDays}
-                  onChangeText={setIntervalDays}
-                  placeholder="7"
-                  placeholderTextColor={Colors.sky}
-                  keyboardType="number-pad"
-                  accessibilityLabel="Repeat interval in days"
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Execution Time</Text>
-                <View style={styles.timeRow}>
-                  <TextInput
-                    style={[styles.input, styles.timeInput]}
-                    value={selectedHour}
-                    onChangeText={setSelectedHour}
-                    keyboardType="number-pad"
-                    maxLength={2}
-                    accessibilityLabel="Hour"
-                  />
-                  <Text style={styles.timeSeparator}>:</Text>
-                  <TextInput
-                    style={[styles.input, styles.timeInput]}
-                    value={selectedMinute}
-                    onChangeText={setSelectedMinute}
-                    keyboardType="number-pad"
-                    maxLength={2}
-                    accessibilityLabel="Minute"
-                  />
-                  <HapticButton
-                    style={styles.periodButton}
-                    onPress={() => setSelectedPeriod((p) => (p === 'AM' ? 'PM' : 'AM'))}
-                    accessibilityLabel={`Toggle AM/PM, currently ${selectedPeriod}`}
-                  >
-                    <Text style={styles.periodText}>{selectedPeriod}</Text>
-                  </HapticButton>
-                </View>
-              </View>
-
-              <HapticButton
-                style={isCreating ? [styles.createButton, styles.createButtonDisabled] : [styles.createButton]}
-                onPress={handleCreateSchedule}
-                disabled={isCreating}
-                accessibilityLabel={isCreating ? 'Creating schedule' : 'Create payment schedule'}
-                hapticStyle={Haptics.ImpactFeedbackStyle.Medium}
-              >
-                {isCreating ? (
-                  <ActivityIndicator color={Colors.white} />
-                ) : (
-                  <Text style={styles.createButtonText}>Create Schedule</Text>
-                )}
-              </HapticButton>
-            </ScrollView>
-          </Reanimated.View>
-        </>
-      )}
-
-      <AppNoticeModal
-        visible={!!notice}
-        title={notice?.title ?? ''}
-        message={notice?.message ?? ''}
-        tone={notice?.tone ?? 'info'}
-        actions={notice?.actions}
-        onClose={() => setNotice(null)}
+      <FlatList
+        data={daySchedules}
+        keyExtractor={(item) => String(item.id)}
+        renderItem={renderPaymentRow}
+        contentContainerStyle={styles.paymentListContent}
+        ListEmptyComponent={
+          <View style={styles.emptyDayWrap}>
+            <View style={styles.emptyDot} />
+            <Text style={styles.emptyDayText}>No payments scheduled</Text>
+          </View>
+        }
       />
+
+      <CrescaSheet
+        sheetRef={newPaymentSheetRef}
+        snapPoints={["90%"]}
+        title="Schedule Payment"
+      >
+        <View style={styles.sheetContent}>
+          <CrescaInput
+            label="Recipient address"
+            placeholder="Algorand address"
+            value={recipientInput}
+            onChangeText={(text) => {
+              setRecipientInput(text.trim());
+              setFormError(null);
+            }}
+            autoCapitalize="none"
+          />
+
+          <CrescaInput
+            label="Amount"
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+            value={amountInput}
+            onChangeText={(text) => {
+              setAmountInput(sanitizeNumeric(text));
+              setFormError(null);
+            }}
+          />
+
+          <Text style={styles.sheetLabel}>Asset</Text>
+          <View style={styles.pillRow}>
+            {PAYMENT_ASSETS.map((asset) => {
+              const active = selectedAsset === asset;
+              return (
+                <TouchableOpacity
+                  key={asset}
+                  style={[styles.pill, active ? styles.pillActive : styles.pillInactive]}
+                  onPress={() => {
+                    setSelectedAsset(asset);
+                    setFormError(null);
+                  }}
+                >
+                  <Text style={[styles.pillText, active ? styles.pillTextActive : styles.pillTextInactive]}>{asset}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={styles.sheetLabel}>Frequency</Text>
+          <TouchableOpacity
+            style={styles.selectorRow}
+            onPress={() => {
+              setFrequencyDraft(frequency);
+              frequencySheetRef.current?.present();
+            }}
+          >
+            <Text style={styles.selectorText}>{FREQUENCY_OPTIONS.find((option) => option.key === frequency)?.label}</Text>
+            <Ionicons name="chevron-down" size={16} color={C.text.t2} />
+          </TouchableOpacity>
+
+          {frequency === "custom" ? (
+            <CrescaInput
+              label="Custom interval (days)"
+              placeholder="7"
+              keyboardType="number-pad"
+              value={customDaysInput}
+              onChangeText={(text) => setCustomDaysInput(text.replace(/[^0-9]/g, ""))}
+            />
+          ) : null}
+
+          <Text style={styles.sheetLabel}>Start date</Text>
+          <TouchableOpacity
+            style={styles.selectorRow}
+            onPress={() => {
+              setStartDateDraft(startDate);
+              setStartDateMonth(firstDayOfMonth(startDate));
+              startDateSheetRef.current?.present();
+            }}
+          >
+            <Text style={styles.selectorText}>{formatDateLabel(startDate)}</Text>
+            <Ionicons name="calendar-outline" size={16} color={C.text.t2} />
+          </TouchableOpacity>
+
+          <Text style={styles.contractInfoText}>Calendar App ID: {CONTRACT_APP_IDS.CrescaCalendarPayments}</Text>
+
+          {formError ? <Text style={styles.formErrorText}>{formError}</Text> : null}
+
+          <PrimaryButton
+            label="Schedule Payment"
+            variant="black"
+            loading={isSubmitting}
+            onPress={handleCreateSchedule}
+          />
+        </View>
+      </CrescaSheet>
+
+      <CrescaSheet
+        sheetRef={paymentDetailSheetRef}
+        snapPoints={["70%"]}
+        title="Payment Detail"
+      >
+        {selectedSchedule ? (
+          <View style={styles.sheetContent}>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Recipient</Text>
+              <Text style={styles.detailValue}>{formatAddress(selectedSchedule.recipient)}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Amount</Text>
+              <Text style={styles.detailValue}>{selectedSchedule.amount.toFixed(4)} ALGO</Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Frequency</Text>
+              <Text style={styles.detailValue}>{frequencyLabel(selectedSchedule)}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Next execution</Text>
+              <Text style={styles.detailValue}>{formatDateTime(selectedSchedule.executeAt)}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Executed</Text>
+              <Text style={styles.detailValue}>{selectedSchedule.executedCount}/{selectedSchedule.occurrences}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Tx hash</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!selectedSchedule.txId) return;
+                  void Linking.openURL(`https://lora.algokit.io/testnet/transaction/${selectedSchedule.txId}`);
+                }}
+              >
+                <Text style={[styles.detailValue, styles.txLink]}>
+                  {selectedSchedule.txId ? `${selectedSchedule.txId.slice(0, 8)}...` : "-"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {selectedSchedule.active ? (
+              <PrimaryButton
+                label="Execute Now"
+                variant="teal"
+                loading={isExecuting}
+                onPress={() => handleExecuteSchedule(selectedSchedule)}
+              />
+            ) : null}
+
+            {selectedSchedule.active ? (
+              <TouchableOpacity
+                style={styles.dangerButton}
+                onPress={() => handleCancelSchedule(selectedSchedule)}
+                disabled={isCancelling}
+              >
+                {isCancelling ? (
+                  <ActivityIndicator size="small" color={C.semantic.danger} />
+                ) : (
+                  <Text style={styles.dangerButtonText}>Cancel Payment</Text>
+                )}
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
+      </CrescaSheet>
+
+      <CrescaSheet
+        sheetRef={frequencySheetRef}
+        snapPoints={["50%"]}
+        title="Payment Frequency"
+      >
+        <View style={styles.sheetContent}>
+          {FREQUENCY_OPTIONS.map((option) => {
+            const selected = frequencyDraft === option.key;
+            return (
+              <TouchableOpacity
+                key={option.key}
+                style={styles.frequencyOption}
+                onPress={() => setFrequencyDraft(option.key)}
+              >
+                <Ionicons
+                  name={selected ? "radio-button-on" : "radio-button-off"}
+                  size={18}
+                  color={selected ? C.brand.black : C.text.t2}
+                />
+                <Text style={styles.frequencyLabel}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          <PrimaryButton
+            label="Confirm"
+            variant="black"
+            onPress={() => {
+              setFrequency(frequencyDraft);
+              frequencySheetRef.current?.dismiss();
+            }}
+          />
+        </View>
+      </CrescaSheet>
+
+      <CrescaSheet
+        sheetRef={startDateSheetRef}
+        snapPoints={["72%"]}
+        title="Choose Start Date"
+      >
+        <View style={styles.sheetContent}>
+          <View style={styles.startPickerMonthRow}>
+            <TouchableOpacity
+              style={styles.monthArrow}
+              onPress={() =>
+                setStartDateMonth(
+                  new Date(startDateMonth.getFullYear(), startDateMonth.getMonth() - 1, 1),
+                )
+              }
+            >
+              <Ionicons name="chevron-back" size={18} color={C.text.t1} />
+            </TouchableOpacity>
+
+            <Text style={styles.monthTitle}>
+              {startDateMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+            </Text>
+
+            <TouchableOpacity
+              style={styles.monthArrow}
+              onPress={() =>
+                setStartDateMonth(
+                  new Date(startDateMonth.getFullYear(), startDateMonth.getMonth() + 1, 1),
+                )
+              }
+            >
+              <Ionicons name="chevron-forward" size={18} color={C.text.t1} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.startPickerWeekRow}>
+            {WEEK_DAYS.map((label) => (
+              <Text key={`start-week-${label}`} style={styles.startPickerWeekText}>{label}</Text>
+            ))}
+          </View>
+
+          <View style={styles.startPickerGrid}>
+            {startDateCells.map((cell) => {
+              const today = startOfDay(new Date());
+              const isToday = isSameDay(cell.date, today);
+              const selected = isSameDay(cell.date, startDateDraft);
+              const disabled = startOfDay(cell.date).getTime() <= today.getTime();
+
+              return (
+                <TouchableOpacity
+                  key={`start-day-${cell.date.toISOString()}`}
+                  style={styles.startPickerDayWrap}
+                  disabled={disabled}
+                  onPress={() => {
+                    setStartDateDraft(startOfDay(cell.date));
+                    void Haptics.selectionAsync();
+                  }}
+                >
+                  <View
+                    style={[
+                      styles.startPickerDayCircle,
+                      isToday && styles.startPickerToday,
+                      selected && styles.startPickerDaySelected,
+                      disabled && styles.startPickerDayDisabled,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.startPickerDayText,
+                        !cell.isCurrentMonth && styles.startPickerDayTextOut,
+                        selected && styles.startPickerDayTextSelected,
+                        disabled && styles.startPickerDayTextDisabled,
+                      ]}
+                    >
+                      {cell.day}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={styles.startPickerHelper}>
+            Start date must be in the future.
+          </Text>
+
+          <PrimaryButton
+            label="Use this date"
+            variant="black"
+            onPress={() => {
+              setStartDate(startDateDraft);
+              setFormError(null);
+              startDateSheetRef.current?.dismiss();
+            }}
+          />
+        </View>
+      </CrescaSheet>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.bg.screen },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.bg.screen },
-  header: {
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
-    backgroundColor: Colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.divider,
+  container: {
+    flex: 1,
+    backgroundColor: C.surfaces.bgBase,
   },
-  headerCenter: { alignItems: 'center' },
-  headerTitle: { fontSize: Typography.md, fontWeight: Typography.bold, color: Colors.navy },
-  walletId: { marginTop: 2, fontSize: Typography.xs, color: Colors.steel },
-  content: { flex: 1 },
-
-  calendarContainer: {
-    marginHorizontal: Spacing.xl,
-    marginTop: Spacing.xl,
-    marginBottom: Spacing.lg,
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    padding: Spacing.xl,
-    ...Shadow.card,
-  },
-  monthNavigation: { marginBottom: Spacing.lg },
-  monthYear: { fontSize: Typography.md, fontWeight: Typography.bold, color: Colors.navy, marginBottom: Spacing.md },
-  navigationButtons: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 },
-  navButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.bg.input, alignItems: 'center', justifyContent: 'center' },
-  todayButton: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: Radius.full, backgroundColor: Colors.bg.input },
-  todayText: { color: Colors.navy, fontWeight: Typography.semibold, fontSize: Typography.sm },
-
-  weekDays: { flexDirection: 'row', marginBottom: Spacing.sm },
-  weekDay: { flex: 1, alignItems: 'center' },
-  weekDayText: { fontSize: Typography.xs, color: Colors.steel, fontWeight: Typography.semibold },
-
-  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' },
-  calendarDay: { width: '14.28%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  calendarDayInactive: { opacity: 0.28 },
-  calendarDayToday: { backgroundColor: Colors.navy, borderRadius: Radius.full },
-  calendarDayText: { color: Colors.navy, fontSize: Typography.base },
-  calendarDayTextInactive: { color: Colors.steel },
-  calendarDayTextToday: { color: Colors.white, fontWeight: Typography.bold },
-  scheduleDot: { position: 'absolute', bottom: 5, width: 4, height: 4, borderRadius: 2, backgroundColor: Colors.steel },
-
-  schedulesListContainer: { paddingHorizontal: Spacing.xl, paddingBottom: 40 },
-  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md },
-  schedulesListTitle: { fontSize: Typography.md, fontWeight: Typography.bold, color: Colors.navy },
-  chainCount: { fontSize: Typography.xs, color: Colors.steel },
-
-  emptyState: { alignItems: 'center', paddingVertical: 36 },
-  emptyTitle: { fontSize: Typography.md, fontWeight: Typography.bold, color: Colors.navy, marginTop: 8 },
-  emptyText: { fontSize: Typography.sm, color: Colors.steel, marginTop: 6, textAlign: 'center', lineHeight: 20 },
-
-  scheduleCard: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.lg,
-    padding: Spacing.lg,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    ...Shadow.subtle,
-  },
-  scheduleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  scheduleAmount: { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.navy },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.full },
-  statusActive: { backgroundColor: Colors.gainBg },
-  statusInactive: { backgroundColor: Colors.lossBg },
-  statusText: { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.steel },
-  scheduleRecipient: { fontSize: Typography.sm, color: Colors.steel, marginBottom: 4 },
-  scheduleMeta: { fontSize: Typography.xs, color: Colors.steel, marginBottom: 2 },
-
-  scheduleActions: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
-  actionButton: { flex: 1, borderRadius: Radius.sm, paddingVertical: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  actionButtonPrimary: { backgroundColor: Colors.steel, borderColor: Colors.steel },
-  actionButtonSecondary: { backgroundColor: Colors.white, borderColor: Colors.border },
-  actionButtonText: { color: Colors.steel, fontSize: Typography.sm, fontWeight: Typography.semibold },
-  actionButtonTextPrimary: { color: Colors.white, fontSize: Typography.sm, fontWeight: Typography.semibold },
-
-  scrim: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    zIndex: 10,
-  } as any,
-  sheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: Colors.bg.card,
-    borderTopLeftRadius: Radius.xl,
-    borderTopRightRadius: Radius.xl,
-    padding: Spacing.xl,
-    paddingBottom: 40,
-    zIndex: 11,
-    maxHeight: '88%',
-  } as any,
-  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(6,14,32,0.72)' },
-  modalContent: { backgroundColor: Colors.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '88%' },
-  modalHeader: {
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.divider,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  modalTitle: { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.navy },
-  modalScroll: { padding: Spacing.xl },
-  selectedDateCard: {
-    backgroundColor: Colors.bg.subtle,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
+  loadingWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
     gap: 8,
   },
-  selectedDateText: { color: Colors.navy, fontSize: Typography.sm, fontWeight: Typography.semibold },
-
-  inputGroup: { marginBottom: Spacing.lg },
-  inputLabel: { marginBottom: 6, color: Colors.steel, fontSize: Typography.sm, fontWeight: Typography.semibold },
-  input: {
+  loadingText: {
+    ...T.body,
+    color: C.text.t2,
+  },
+  headerRow: {
+    height: 56,
+    paddingHorizontal: H_PAD,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borders.bDefault,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    ...T.h2,
+    color: C.text.t1,
+  },
+  newBtn: {
+    minHeight: 32,
     borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.bg.input,
-    borderRadius: Radius.md,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 12,
-    color: Colors.navy,
-    fontSize: Typography.base,
+    borderColor: C.borders.bDefault,
+    borderRadius: R.full,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
-  timeRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  timeInput: { flex: 1, textAlign: 'center' },
-  timeSeparator: { color: Colors.navy, fontSize: Typography.xl, fontWeight: Typography.bold },
-  periodButton: {
+  newBtnText: {
+    ...T.smBold,
+    color: C.text.t1,
+  },
+  banner: {
+    marginHorizontal: H_PAD,
+    marginTop: S.sm,
     borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.bg.input,
-    borderRadius: Radius.md,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderRadius: R.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  periodText: { color: Colors.navy, fontWeight: Typography.semibold },
-
-  createButton: {
-    backgroundColor: Colors.navy,
-    borderRadius: Radius.md,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-    marginBottom: 20,
+  bannerError: {
+    backgroundColor: "rgba(240,68,56,0.08)",
+    borderColor: C.semantic.danger,
   },
-  createButtonDisabled: { opacity: 0.55 },
-  createButtonText: { color: Colors.white, fontSize: Typography.base, fontWeight: Typography.bold },
+  bannerSuccess: {
+    backgroundColor: "rgba(18,183,106,0.08)",
+    borderColor: C.semantic.success,
+  },
+  bannerText: {
+    ...T.sm,
+  },
+  bannerTextError: {
+    color: C.semantic.danger,
+  },
+  bannerTextSuccess: {
+    color: C.semantic.success,
+  },
+  monthNavRow: {
+    marginTop: S.md,
+    marginHorizontal: H_PAD,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  monthArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: C.borders.bDefault,
+    backgroundColor: C.surfaces.bgSurface,
+  },
+  monthTitle: {
+    ...T.bodyMd,
+    color: C.text.t1,
+  },
+  weekHeaderRow: {
+    marginTop: S.md,
+    marginHorizontal: H_PAD,
+    flexDirection: "row",
+  },
+  weekHeaderText: {
+    flex: 1,
+    textAlign: "center",
+    ...T.sm,
+    color: C.text.t2,
+  },
+  calendarGrid: {
+    marginTop: S.sm,
+    marginHorizontal: H_PAD,
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  dayCellWrap: {
+    width: "14.2857%",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  dayCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dayToday: {
+    borderWidth: 1,
+    borderColor: C.brand.black,
+  },
+  daySelected: {
+    backgroundColor: C.brand.black,
+  },
+  dayText: {
+    ...T.body,
+    color: C.text.t1,
+  },
+  dayTextOut: {
+    color: C.text.t3,
+  },
+  dayTextToday: {
+    color: C.text.t1,
+  },
+  dayTextSelected: {
+    color: C.text.tInv,
+  },
+  dayDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: C.brand.teal,
+    marginTop: 2,
+  },
+  upcomingCard: {
+    marginTop: S.md,
+    marginHorizontal: H_PAD,
+    borderRadius: R.md,
+    borderWidth: 1,
+    borderColor: C.brand.teal,
+    backgroundColor: "rgba(0,212,170,0.08)",
+    padding: 14,
+  },
+  upcomingLead: {
+    ...T.smBold,
+    color: C.brand.tealDim,
+  },
+  upcomingTitle: {
+    ...T.bodyMd,
+    color: C.text.t1,
+    marginTop: 4,
+  },
+  upcomingDate: {
+    ...T.sm,
+    color: C.text.t2,
+    marginTop: 2,
+  },
+  sectionHeadRow: {
+    marginTop: S.md,
+    marginHorizontal: H_PAD,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sectionHeadTitle: {
+    ...T.h3,
+    color: C.text.t1,
+    flex: 1,
+    marginRight: 8,
+  },
+  chainCountText: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  paymentListContent: {
+    marginTop: S.sm,
+    paddingBottom: S.lg,
+  },
+  paymentRow: {
+    marginHorizontal: H_PAD,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borders.bDefault,
+    minHeight: 64,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  paymentAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: C.surfaces.bgSurface,
+    borderWidth: 1,
+    borderColor: C.borders.bDefault,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  paymentAvatarText: {
+    ...T.smBold,
+    color: C.text.t1,
+  },
+  paymentMid: {
+    flex: 1,
+  },
+  paymentName: {
+    ...T.bodyMd,
+    color: C.text.t1,
+  },
+  paymentDesc: {
+    ...T.sm,
+    color: C.text.t2,
+    marginTop: 2,
+  },
+  paymentRight: {
+    alignItems: "flex-end",
+    gap: 4,
+  },
+  paymentAmount: {
+    ...T.bodyMd,
+    color: C.text.t1,
+  },
+  emptyDayWrap: {
+    marginTop: S.md,
+    marginHorizontal: H_PAD,
+    minHeight: 88,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  emptyDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: C.brand.teal,
+  },
+  emptyDayText: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  sheetContent: {
+    gap: 12,
+    paddingTop: 8,
+  },
+  sheetLabel: {
+    ...T.smBold,
+    color: C.text.t1,
+  },
+  pillRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  pill: {
+    borderWidth: 1,
+    borderRadius: R.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  pillActive: {
+    backgroundColor: C.brand.black,
+    borderColor: C.brand.black,
+  },
+  pillInactive: {
+    backgroundColor: C.surfaces.bgSurface,
+    borderColor: C.borders.bDefault,
+  },
+  pillText: {
+    ...T.smBold,
+  },
+  pillTextActive: {
+    color: C.text.tInv,
+  },
+  pillTextInactive: {
+    color: C.text.t2,
+  },
+  selectorRow: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: C.borders.bDefault,
+    borderRadius: R.sm,
+    backgroundColor: C.surfaces.bgSurface,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  selectorText: {
+    ...T.body,
+    color: C.text.t1,
+    flex: 1,
+  },
+  startPickerMonthRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  startPickerWeekRow: {
+    flexDirection: "row",
+    marginTop: 4,
+  },
+  startPickerWeekText: {
+    flex: 1,
+    textAlign: "center",
+    ...T.sm,
+    color: C.text.t2,
+  },
+  startPickerGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 2,
+  },
+  startPickerDayWrap: {
+    width: "14.2857%",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  startPickerDayCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  startPickerToday: {
+    borderWidth: 1,
+    borderColor: C.brand.black,
+  },
+  startPickerDaySelected: {
+    backgroundColor: C.brand.black,
+  },
+  startPickerDayDisabled: {
+    backgroundColor: C.surfaces.bgSurface,
+  },
+  startPickerDayText: {
+    ...T.body,
+    color: C.text.t1,
+  },
+  startPickerDayTextOut: {
+    color: C.text.t3,
+  },
+  startPickerDayTextSelected: {
+    color: C.text.tInv,
+  },
+  startPickerDayTextDisabled: {
+    color: C.text.t3,
+  },
+  startPickerHelper: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  contractInfoText: {
+    ...T.address,
+    color: C.text.t2,
+  },
+  formErrorText: {
+    ...T.sm,
+    color: C.semantic.danger,
+  },
+  detailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borders.bDefault,
+    paddingBottom: 8,
+  },
+  detailLabel: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  detailValue: {
+    ...T.bodyMd,
+    color: C.text.t1,
+    flex: 1,
+    textAlign: "right",
+  },
+  txLink: {
+    color: C.brand.purple,
+  },
+  dangerButton: {
+    borderWidth: 1,
+    borderColor: C.semantic.danger,
+    borderRadius: R.full,
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(240,68,56,0.04)",
+  },
+  dangerButtonText: {
+    ...T.btn,
+    color: C.semantic.danger,
+  },
+  frequencyOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    minHeight: 42,
+  },
+  frequencyLabel: {
+    ...T.bodyMd,
+    color: C.text.t1,
+  },
 });

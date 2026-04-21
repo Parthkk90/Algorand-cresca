@@ -1,801 +1,1415 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
-import * as Haptics from 'expo-haptics';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import Slider from "@react-native-community/slider";
+import { BottomSheetModal } from "@gorhom/bottom-sheet";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Animated,
-  Easing,
+  FlatList,
   Linking,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-} from 'react-native';
-import { AppNoticeAction, AppNoticeModal, AppNoticeTone } from '../components/AppNoticeModal';
-import { ScreenContainer } from '../components/ScreenContainer';
-import { BASKETS, Basket, basketToContractArgs, getBasket } from '../constants/baskets';
-import { Anim, Colors, Radius, Shadow, Spacing, Typography } from '../constants/theme';
-import { algorandService } from '../services/algorandService';
-import { crescaBucketService } from '../services/algorandContractServices';
-import { dartRouterService } from '../services/dartRouterService';
-import { pythOracleService } from '../services/pythOracleService';
-import { positionStore, StoredPosition } from '../services/positionStore';
+} from "react-native";
+import { ScreenContainer } from "../components/ScreenContainer";
+import { BASKETS } from "../constants/baskets";
+import { CONTRACT_APP_IDS, crescaBucketService } from "../services/algorandContractServices";
+import { algorandService } from "../services/algorandService";
+import { dartRouterService } from "../services/dartRouterService";
+import { positionStore, StoredPosition } from "../services/positionStore";
+import {
+  AssetChip,
+  CrescaInput,
+  CrescaSheet,
+  PrimaryButton,
+  StatusTag,
+} from "../src/components/ui";
+import { C, H_PAD, R, S, T } from "../src/theme";
 
-// ─── Static metadata per basket id ─────────────────────────────────────────
-
-type Risk = 'Low' | 'Medium' | 'High';
-
-interface BundleMeta {
-  icon:       keyof typeof Ionicons.glyphMap;
-  risk:       Risk;
-  riskColor:  string;
-  riskBg:     string;
-  accent:     string;
-}
-
-const BUNDLE_META: Record<string, BundleMeta> = {
-  'non-evm-giants':    { icon: 'globe-outline',            risk: 'Medium', riskColor: Colors.navy,  riskBg: '#2E4D6B55', accent: Colors.navy },
-  'crypto-blue-chips': { icon: 'diamond-outline',          risk: 'Medium', riskColor: Colors.navy,  riskBg: '#2E4D6B55', accent: Colors.navy },
-  'move-ecosystem':    { icon: 'git-branch-outline',       risk: 'High',   riskColor: Colors.navy,  riskBg: '#2E4D6B55', accent: Colors.navy },
-  'speed-l1s':         { icon: 'flash-outline',            risk: 'High',   riskColor: Colors.navy,  riskBg: '#2E4D6B55', accent: Colors.navy },
-  'store-of-value':    { icon: 'shield-checkmark-outline', risk: 'Low',    riskColor: Colors.navy,  riskBg: '#2E4D6B55', accent: Colors.navy },
+type PositionModel = {
+  position: StoredPosition;
+  symbols: string[];
+  depositedAlgo: number;
+  currentAlgo: number;
+  pnlAlgo: number;
 };
 
-const ALL_SYMBOLS = [...new Set(BASKETS.flatMap((b) => b.assets.map((a) => a.symbol)))];
+type TxType = "open" | "deposit" | "withdraw" | "close" | "bucket_create";
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+type TxRow = {
+  txId: string;
+  type: TxType;
+  timestamp: number;
+  amountAlgo?: number;
+};
 
-function formatUSD(price: number): string {
-  if (price >= 10_000) return `$${Math.round(price).toLocaleString()}`;
-  if (price >= 100)    return `$${price.toFixed(0)}`;
-  if (price >= 1)      return `$${price.toFixed(2)}`;
-  return `$${price.toFixed(3)}`;
+type PendingAction = "deposit" | "withdraw" | "create" | "close" | null;
+
+const DEPOSIT_ASSET_OPTIONS = ["ALGO", "USDC", "ETH"] as const;
+const WITHDRAW_OPTIONS = [25, 50, 75, 100] as const;
+const DEFAULT_LEVERAGE = 10;
+
+const ALL_ASSETS = Array.from(
+  BASKETS.flatMap((basket) => basket.assets.map((asset) => [asset.symbol, asset.asaId])).reduce(
+    (map, [symbol, asaId]) => map.set(symbol, asaId),
+    new Map<string, number>(),
+  ),
+);
+
+const SYMBOL_TO_ASA = ALL_ASSETS.reduce((acc, [symbol, asaId]) => {
+  acc[symbol] = asaId;
+  return acc;
+}, {} as Record<string, number>);
+
+const ASA_TO_SYMBOL = Object.entries(SYMBOL_TO_ASA).reduce((acc, [symbol, asaId]) => {
+  acc[asaId] = symbol;
+  return acc;
+}, {} as Record<number, string>);
+
+function sanitizeNumberInput(raw: string): string {
+  const normalized = raw.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  const firstDot = normalized.indexOf(".");
+  if (firstDot === -1) return normalized;
+
+  const compact = `${normalized.slice(0, firstDot + 1)}${normalized
+    .slice(firstDot + 1)
+    .replace(/\./g, "")}`;
+  const [intPart, decimalPart] = compact.split(".");
+
+  if (decimalPart === undefined) return intPart;
+  return `${intPart}.${decimalPart.slice(0, 6)}`;
 }
 
-function timeAgo(ms: number): string {
-  const diff = Date.now() - ms;
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1)  return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24)  return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+function formatAlgo(amount: number): string {
+  if (!Number.isFinite(amount)) return "0.0000";
+  return amount
+    .toFixed(4)
+    .replace(/\.0+$/, "")
+    .replace(/(\.[0-9]*?)0+$/, "$1");
 }
 
-// ─── Skeleton card ──────────────────────────────────────────────────────────
-
-function SkeletonCard() {
-  const pulse = useRef(new Animated.Value(0.4)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1,   duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.4, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ]),
-    ).start();
-  }, [pulse]);
-
-  return (
-    <Animated.View style={[styles.card, { opacity: pulse }]}>
-      <View style={styles.skelHead} />
-      <View style={styles.skelDesc} />
-      <View style={styles.skelRow}>
-        {[60, 50, 60, 50, 45].map((w, i) => (
-          <View key={i} style={[styles.skelChip, { width: w }]} />
-        ))}
-      </View>
-      <View style={styles.divider} />
-      <View style={styles.skelGrid}>
-        {[0, 1, 2, 3, 4].map((i) => (
-          <View key={i} style={styles.skelPrice} />
-        ))}
-      </View>
-      <View style={styles.skelCta} />
-    </Animated.View>
-  );
+function formatUsd(amount: number): string {
+  if (!Number.isFinite(amount)) return "$0.00";
+  return `$${amount.toFixed(2)}`;
 }
 
-// ─── Position card ──────────────────────────────────────────────────────────
-
-function PositionCard({
-  position,
-  pnl,
-  pnlLoading,
-  onClose,
-}: {
-  position:   StoredPosition;
-  pnl:        string | null;
-  pnlLoading: boolean;
-  onClose:    () => void;
-}) {
-  const basket  = getBasket(position.basketId);
-  const meta    = BUNDLE_META[position.basketId];
-  const accent  = meta?.accent ?? Colors.navy;
-  const pnlNum  = pnl !== null ? parseFloat(pnl) : null;
-  const isGain  = pnlNum !== null && pnlNum >= 0;
-  const pnlColor = pnlNum === null ? Colors.text.muted : isGain ? Colors.gain : Colors.loss;
-
-  // Entry value to compute pnl %
-  const pnlPct = pnlNum !== null && position.marginAlgo > 0
-    ? ((pnlNum / position.marginAlgo) * 100).toFixed(2)
-    : null;
-
-  return (
-    <View style={styles.posCard}>
-      {/* Accent stripe */}
-      <View style={[styles.posAccent, { backgroundColor: accent }]} />
-
-      {/* Header */}
-      <View style={styles.posHeader}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.posName} numberOfLines={1}>
-            {basket?.name ?? position.basketId}
-          </Text>
-          <Text style={styles.posMeta}>
-            {timeAgo(position.openedAt)} · {position.marginAlgo.toFixed(3)} ALGO margin
-          </Text>
-        </View>
-        <View style={[styles.levBadge, { backgroundColor: accent + '22', borderColor: accent + '55' }]}>
-          <Text style={[styles.levBadgeText, { color: accent }]}>{position.leverage}×</Text>
-        </View>
-      </View>
-
-      <View style={styles.posDivider} />
-
-      {/* P&L row */}
-      <View style={styles.pnlRow}>
-        <View>
-          <Text style={styles.pnlLabel}>Unrealized P&L</Text>
-          {pnlLoading
-            ? <View style={styles.pnlSkeleton} />
-            : (
-              <View style={styles.pnlValueRow}>
-                <Text style={[styles.pnlValue, { color: pnlColor, fontVariant: ['tabular-nums'] }]}>
-                  {pnlNum !== null
-                    ? `${isGain ? '+' : ''}${pnlNum.toFixed(4)} ALGO`
-                    : '—'}
-                </Text>
-                {pnlPct !== null && (
-                  <View style={[styles.pnlPctBadge, { backgroundColor: isGain ? Colors.gainBg + '55' : Colors.lossBg + '55' }]}>
-                    <Text style={[styles.pnlPctText, { color: pnlColor }]}>
-                      {isGain ? '+' : ''}{pnlPct}%
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )
-          }
-        </View>
-
-        {/* Close button */}
-        <TouchableOpacity
-          style={styles.closeBtn}
-          onPress={onClose}
-          activeOpacity={0.75}
-          accessibilityRole="button"
-          accessibilityLabel={`Close position on ${basket?.name}`}
-          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-        >
-          <Ionicons name="close-circle" size={16} color={Colors.loss} />
-          <Text style={styles.closeBtnText}>Close</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Txn link */}
-      <TouchableOpacity
-        onPress={() => Linking.openURL(`https://lora.algokit.io/testnet/transaction/${position.txId}`)}
-        style={styles.txRow}
-        hitSlop={{ top: 4, right: 4, bottom: 4, left: 4 }}
-      >
-        <Text style={styles.txText}>#{position.positionId} · View on Explorer</Text>
-        <Ionicons name="open-outline" size={11} color={Colors.text.muted} />
-      </TouchableOpacity>
-    </View>
-  );
+function shortAddress(address: string): string {
+  if (!address || address.length < 12) return address;
+  return `${address.slice(0, 6)}...${address.slice(-6)}`;
 }
 
-// ─── Bundle card ────────────────────────────────────────────────────────────
-
-function BundleCard({
-  basket,
-  prices,
-  onPress,
-}: {
-  basket:  Basket;
-  prices:  Record<string, number>;
-  onPress: () => void;
-}) {
-  const meta = BUNDLE_META[basket.id] ?? {
-    icon: 'grid-outline', risk: 'Medium' as Risk,
-    riskColor: Colors.navy, riskBg: '#2E4D6B55', accent: Colors.navy,
-  };
-
-  return (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={onPress}
-      activeOpacity={0.82}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${basket.name}, ${meta.risk} risk bundle`}
-    >
-      <View style={[styles.cardAccent, { backgroundColor: meta.accent }]} />
-
-      <View style={styles.cardHead}>
-        <View style={[styles.iconWrap, { borderColor: meta.accent + '55' }]}>
-          <Ionicons name={meta.icon} size={20} color={meta.accent} />
-        </View>
-        <View style={styles.cardTitleCol}>
-          <Text style={styles.cardName}>{basket.name}</Text>
-          <Text style={styles.cardDesc} numberOfLines={1}>{basket.description}</Text>
-        </View>
-        <View style={[styles.riskBadge, { backgroundColor: meta.riskBg }]}>
-          <Text style={[styles.riskText, { color: meta.riskColor }]}>{meta.risk}</Text>
-        </View>
-      </View>
-
-      <View style={styles.chipsRow}>
-        {basket.assets.map((a) => (
-          <View key={a.asaId} style={styles.chip}>
-            <Text style={styles.chipSymbol}>{a.symbol}</Text>
-            <Text style={styles.chipPct}>{a.weight}%</Text>
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.divider} />
-
-      <View style={styles.pricesGrid}>
-        {basket.assets.map((a) => {
-          const usd = prices[a.symbol];
-          return (
-            <View key={a.asaId} style={styles.priceCell}>
-              <Text style={styles.priceSym}>{a.symbol}</Text>
-              <Text style={[styles.priceVal, { fontVariant: ['tabular-nums'] }]}>
-                {usd != null ? formatUSD(usd) : '—'}
-              </Text>
-            </View>
-          );
-        })}
-      </View>
-
-      <View style={styles.divider} />
-
-      <View style={styles.ctaRow}>
-        <Text style={[styles.ctaLabel, { color: meta.accent }]}>Trade This Bundle</Text>
-        <Ionicons name="arrow-forward-circle" size={20} color={meta.accent} />
-      </View>
-    </TouchableOpacity>
-  );
+function riskFromLeverage(leverage: number): "Low" | "Medium" | "High" {
+  if (leverage <= 8) return "Low";
+  if (leverage <= 16) return "Medium";
+  return "High";
 }
 
-// ─── Screen ─────────────────────────────────────────────────────────────────
+function equalWeights(symbols: string[]): Record<string, number> {
+  if (symbols.length === 0) return {};
+  const base = Math.floor(100 / symbols.length);
+  const remainder = 100 - base * symbols.length;
 
-export default function BundlesScreen() {
+  return symbols.reduce((acc, symbol, index) => {
+    acc[symbol] = base + (index === 0 ? remainder : 0);
+    return acc;
+  }, {} as Record<string, number>);
+}
+
+function txTypeLabel(type: TxType): string {
+  if (type === "bucket_create") return "BUCKET CREATE";
+  return type.toUpperCase();
+}
+
+export default function BucketsScreen() {
   const router = useRouter();
 
-  const [prices,     setPrices]     = useState<Record<string, number>>({});
-  const [loading,    setLoading]    = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const depositSheetRef = useRef<BottomSheetModal | null>(null);
+  const withdrawSheetRef = useRef<BottomSheetModal | null>(null);
+  const newBucketSheetRef = useRef<BottomSheetModal | null>(null);
+  const detailSheetRef = useRef<BottomSheetModal | null>(null);
 
-  // Positions
-  const [positions,   setPositions]   = useState<StoredPosition[]>([]);
-  const [pnls,        setPnls]        = useState<Record<number, string>>({});
-  const [pnlLoading,  setPnlLoading]  = useState(false);
-  const [closingId,   setClosingId]   = useState<number | null>(null);
-  const [notice,      setNotice]      = useState<{
-    title: string;
-    message: string;
-    tone: AppNoticeTone;
-    actions?: AppNoticeAction[];
-  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [positions, setPositions] = useState<StoredPosition[]>([]);
+  const [pnls, setPnls] = useState<Record<number, number>>({});
+  const [txHistory, setTxHistory] = useState<Record<number, TxRow[]>>({});
 
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [walletAddress, setWalletAddress] = useState("");
+  const [walletAlgo, setWalletAlgo] = useState(0);
+  const [collateralAlgo, setCollateralAlgo] = useState(0);
 
-  // ── Load prices ──────────────────────────────────────────────────────────
+  const [selectedPosition, setSelectedPosition] = useState<StoredPosition | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
 
-  const loadPrices = useCallback(async (isRefresh = false) => {
+  const [depositAsset, setDepositAsset] = useState<(typeof DEPOSIT_ASSET_OPTIONS)[number]>("ALGO");
+  const [depositAmount, setDepositAmount] = useState("");
+
+  const [withdrawPercent, setWithdrawPercent] = useState<(typeof WITHDRAW_OPTIONS)[number]>(25);
+
+  const [selectedBucketAssets, setSelectedBucketAssets] = useState<string[]>(["ALGO", "USDC"]);
+  const [bucketWeights, setBucketWeights] = useState<Record<string, number>>({ ALGO: 50, USDC: 50 });
+  const [createdBucketId, setCreatedBucketId] = useState<number | null>(null);
+
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const selectedPositionPnl = selectedPosition ? (pnls[selectedPosition.positionId] ?? 0) : 0;
+
+  const positionModels = useMemo<PositionModel[]>(() => {
+    return positions.map((position) => {
+      const pnlAlgo = pnls[position.positionId] ?? 0;
+      const depositedAlgo = position.marginAlgo;
+      const currentAlgo = Math.max(0, depositedAlgo + pnlAlgo);
+      const symbols = position.asaIds
+        .map((id) => ASA_TO_SYMBOL[id] ?? `ASA-${id}`)
+        .slice(0, 4);
+
+      return {
+        position,
+        symbols,
+        depositedAlgo,
+        currentAlgo,
+        pnlAlgo,
+      };
+    });
+  }, [pnls, positions]);
+
+  const summary = useMemo(() => {
+    const depositedTotal = positionModels.reduce((acc, item) => acc + item.depositedAlgo, 0);
+    const currentTotal = positionModels.reduce((acc, item) => acc + item.currentAlgo, 0);
+    const pnlTotal = currentTotal - depositedTotal;
+    const pct = depositedTotal > 0 ? (pnlTotal / depositedTotal) * 100 : 0;
+
+    return {
+      depositedTotal,
+      currentTotal,
+      pct,
+    };
+  }, [positionModels]);
+
+  const withdrawAmount = useMemo(() => {
+    return collateralAlgo * (withdrawPercent / 100);
+  }, [collateralAlgo, withdrawPercent]);
+
+  const bucketWeightTotal = useMemo(() => {
+    return selectedBucketAssets.reduce((acc, symbol) => acc + (bucketWeights[symbol] ?? 0), 0);
+  }, [bucketWeights, selectedBucketAssets]);
+
+  const selectedPositionTxRows = useMemo(() => {
+    if (!selectedPosition) return [];
+    return txHistory[selectedPosition.positionId] ?? [];
+  }, [selectedPosition, txHistory]);
+
+  const ingestPositionTxRows = useCallback((stored: StoredPosition[]) => {
+    setTxHistory((prev) => {
+      const next: Record<number, TxRow[]> = { ...prev };
+
+      stored.forEach((position) => {
+        const existing = next[position.positionId];
+        if (!existing || existing.length === 0) {
+          next[position.positionId] = [
+            {
+              txId: position.txId,
+              type: "open",
+              timestamp: position.openedAt,
+              amountAlgo: position.marginAlgo,
+            },
+          ];
+        }
+      });
+
+      Object.keys(next).forEach((id) => {
+        if (!stored.some((position) => position.positionId === Number(id))) {
+          delete next[Number(id)];
+        }
+      });
+
+      return next;
+    });
+  }, []);
+
+  const addTxRow = useCallback((positionId: number, row: TxRow) => {
+    setTxHistory((prev) => {
+      const current = prev[positionId] ?? [];
+      return {
+        ...prev,
+        [positionId]: [row, ...current],
+      };
+    });
+  }, []);
+
+  const refreshData = useCallback(async () => {
+    setLoading(true);
+    setErrorMessage(null);
+
     try {
-      if (isRefresh) {
-        setRefreshing(true);
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await algorandService.initializeWallet();
+      const address = algorandService.getAddress();
+      setWalletAddress(address);
+
+      const [storedPositions, balance, collateral] = await Promise.all([
+        positionStore.getAll(),
+        algorandService.getBalance(address),
+        crescaBucketService.getCollateralBalance(address),
+      ]);
+
+      setPositions(storedPositions);
+      ingestPositionTxRows(storedPositions);
+
+      setWalletAlgo(Number(balance.algo) || 0);
+      setCollateralAlgo(Number(collateral) || 0);
+
+      if (storedPositions.length === 0) {
+        setPnls({});
+        return;
       }
-      const result = await pythOracleService.getPrices(ALL_SYMBOLS);
-      const map: Record<string, number> = {};
-      Object.entries(result).forEach(([sym, p]) => { map[sym] = p.price; });
-      setPrices(map);
 
-      if (!isRefresh) {
-        fadeAnim.setValue(0);
-        Animated.timing(fadeAnim, {
-          toValue: 1, duration: Anim.slow, easing: Easing.out(Easing.cubic), useNativeDriver: true,
-        }).start();
-      }
-    } catch (err) {
-      console.error('Failed to load bundle prices:', err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [fadeAnim]);
-
-  // ── Load positions ───────────────────────────────────────────────────────
-
-  const loadPositions = useCallback(async () => {
-    const stored = await positionStore.getAll();
-    setPositions(stored);
-    if (stored.length === 0) return;
-
-    setPnlLoading(true);
-    try {
-      const addr = algorandService.getAddress();
-      if (!addr) return;
-
-      const results: Record<number, string> = {};
+      const pnlMap: Record<number, number> = {};
       await Promise.all(
-        stored.map(async (pos) => {
+        storedPositions.map(async (position) => {
           try {
-            const pnl = await crescaBucketService.getUnrealizedPnL(addr, pos.positionId);
-            results[pos.positionId] = pnl;
+            const rawPnl = await crescaBucketService.getUnrealizedPnL(address, position.positionId);
+            const parsed = Number(rawPnl);
+            pnlMap[position.positionId] = Number.isFinite(parsed) ? parsed : 0;
           } catch {
-            // silently skip — position may be closed on-chain already
+            pnlMap[position.positionId] = 0;
           }
         }),
       );
-      setPnls(results);
-    } catch {
-      // no-op
+
+      setPnls(pnlMap);
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Failed to load bucket data");
     } finally {
-      setPnlLoading(false);
+      setLoading(false);
     }
-  }, []);
+  }, [ingestPositionTxRows]);
 
   useEffect(() => {
-    void loadPrices();
-    void loadPositions();
-    const id = setInterval(() => void loadPrices(true), 30_000);
-    return () => clearInterval(id);
-  }, [loadPrices, loadPositions]);
+    void refreshData();
+  }, [refreshData]);
 
-  // Re-load positions every time the tab gains focus (e.g. back from bundleTrade)
   useFocusEffect(
     useCallback(() => {
-      void loadPositions();
-    }, [loadPositions]),
+      void refreshData();
+    }, [refreshData]),
   );
 
-  // ── Close position ───────────────────────────────────────────────────────
+  const handleDeposit = async () => {
+    const amount = Number(depositAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setErrorMessage("Enter a valid deposit amount");
+      return;
+    }
 
-  const handleClosePosition = useCallback((pos: StoredPosition) => {
-    setNotice({
-      title: 'Close Position',
-      message: `Close Position #${pos.positionId} on "${getBasket(pos.basketId)?.name ?? pos.basketId}"?\n\nThis will realise your P&L and return collateral to your wallet.`,
-      tone: 'info',
-      actions: [
-        { label: 'Cancel', style: 'secondary' },
-        {
-          label: 'Close Position',
-          style: 'danger',
-          onPress: async () => {
-            setClosingId(pos.positionId);
-            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            try {
-              const priceMap = await dartRouterService.getOraclePrices(pos.asaIds);
-              const oracleIds = Array.from(priceMap.keys());
-              const oraclePrices = oracleIds.map((id) => priceMap.get(id)!);
-              await crescaBucketService.updateOracle(oracleIds, oraclePrices);
+    if (depositAsset !== "ALGO") {
+      setErrorMessage("Testnet collateral deposit currently supports ALGO only");
+      return;
+    }
 
-              const { txId, pnlAlgo } = await crescaBucketService.closePosition(
-                pos.positionId,
-                pos.bucketId,
-                pos.asaIds,
-              );
+    setPendingAction("deposit");
+    setErrorMessage(null);
+    setSuccessMessage(null);
 
-              await positionStore.remove(pos.positionId);
-              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    try {
+      const txId = await crescaBucketService.depositCollateral(amount);
+      if (selectedPosition) {
+        addTxRow(selectedPosition.positionId, {
+          txId,
+          type: "deposit",
+          timestamp: Date.now(),
+          amountAlgo: amount,
+        });
+      }
 
-              const pnlNum = parseFloat(pnlAlgo);
-              const sign = pnlNum >= 0 ? '+' : '';
-              setNotice({
-                title: pnlNum >= 0 ? 'Position Closed — Profit' : 'Position Closed — Loss',
-                message: `Realized P&L: ${sign}${pnlAlgo} ALGO\n\nCollateral has been returned to your wallet.`,
-                tone: pnlNum >= 0 ? 'success' : 'error',
-                actions: [
-                  { label: 'View Tx', style: 'secondary', onPress: () => Linking.openURL(`https://lora.algokit.io/testnet/transaction/${txId}`) },
-                  { label: 'Done', style: 'primary' },
-                ],
-              });
-
-              void loadPositions();
-            } catch (e: any) {
-              setNotice({
-                title: 'Close Failed',
-                message: e?.message ?? 'Could not close position. Try again.',
-                tone: 'error',
-              });
-            } finally {
-              setClosingId(null);
-            }
-          },
-        },
-      ],
-    });
-  }, [loadPositions]);
-
-  // ── Open bundle ──────────────────────────────────────────────────────────
-
-  const handleOpen = (basket: Basket) => {
-    void Haptics.selectionAsync();
-    router.push({ pathname: '/bundleTrade', params: { basketId: basket.id } });
+      setSuccessMessage("Collateral deposited successfully");
+      setDepositAmount("");
+      depositSheetRef.current?.dismiss();
+      await refreshData();
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Deposit failed");
+    } finally {
+      setPendingAction(null);
+    }
   };
 
-  // ─── Render ─────────────────────────────────────────────────────────────
+  const handleWithdraw = async () => {
+    if (withdrawAmount <= 0) {
+      setErrorMessage("No collateral available to withdraw");
+      return;
+    }
+
+    setPendingAction("withdraw");
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const txId = await crescaBucketService.withdrawCollateral(withdrawAmount);
+      if (selectedPosition) {
+        addTxRow(selectedPosition.positionId, {
+          txId,
+          type: "withdraw",
+          timestamp: Date.now(),
+          amountAlgo: withdrawAmount,
+        });
+      }
+
+      setSuccessMessage("Collateral withdrawn successfully");
+      withdrawSheetRef.current?.dismiss();
+      await refreshData();
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Withdraw failed");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const handleCreateBucket = async () => {
+    if (selectedBucketAssets.length === 0) {
+      setErrorMessage("Select at least one asset");
+      return;
+    }
+
+    if (bucketWeightTotal !== 100) {
+      setErrorMessage("Allocation total must equal 100%");
+      return;
+    }
+
+    const assetIds = selectedBucketAssets.map((symbol) => SYMBOL_TO_ASA[symbol]);
+    const weights = selectedBucketAssets.map((symbol) => bucketWeights[symbol] ?? 0);
+
+    setPendingAction("create");
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const { txId, bucketId } = await crescaBucketService.createBucket(
+        assetIds,
+        weights,
+        DEFAULT_LEVERAGE,
+      );
+
+      setCreatedBucketId(bucketId);
+      setSuccessMessage(`Bucket #${bucketId} created`);
+
+      if (positions[0]) {
+        addTxRow(positions[0].positionId, {
+          txId,
+          type: "bucket_create",
+          timestamp: Date.now(),
+        });
+      }
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Bucket creation failed");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const handleClosePosition = async () => {
+    if (!selectedPosition) return;
+
+    setPendingAction("close");
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const oracleMap = await dartRouterService.getOraclePrices(selectedPosition.asaIds);
+      const oracleIds = Array.from(oracleMap.keys());
+      const oraclePrices = oracleIds.map((id) => oracleMap.get(id) ?? 0);
+
+      if (oracleIds.length > 0) {
+        await crescaBucketService.updateOracle(oracleIds, oraclePrices);
+      }
+
+      const { txId, pnlAlgo } = await crescaBucketService.closePosition(
+        selectedPosition.positionId,
+        selectedPosition.bucketId,
+        selectedPosition.asaIds,
+      );
+
+      addTxRow(selectedPosition.positionId, {
+        txId,
+        type: "close",
+        timestamp: Date.now(),
+        amountAlgo: Number(pnlAlgo),
+      });
+
+      await positionStore.remove(selectedPosition.positionId);
+      detailSheetRef.current?.dismiss();
+      setSelectedPosition(null);
+      setSuccessMessage(`Position closed. Realized P&L: ${Number(pnlAlgo).toFixed(4)} ALGO`);
+      await refreshData();
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Close position failed");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const toggleBucketAsset = (symbol: string) => {
+    setCreatedBucketId(null);
+    setErrorMessage(null);
+
+    setSelectedBucketAssets((prev) => {
+      const exists = prev.includes(symbol);
+      const next = exists ? prev.filter((item) => item !== symbol) : [...prev, symbol];
+
+      setBucketWeights((current) => {
+        if (next.length === 0) return {};
+
+        const balanced = equalWeights(next);
+        const merged = { ...current };
+
+        next.forEach((item) => {
+          if (merged[item] == null) {
+            merged[item] = balanced[item];
+          }
+        });
+
+        Object.keys(merged).forEach((key) => {
+          if (!next.includes(key)) delete merged[key];
+        });
+
+        return merged;
+      });
+
+      return next;
+    });
+  };
+
+  const renderCard = ({ item }: { item: PositionModel }) => {
+    const isGain = item.pnlAlgo >= 0;
+    const risk = riskFromLeverage(item.position.leverage);
+
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.95}
+        onPress={() => {
+          setSelectedPosition(item.position);
+          detailSheetRef.current?.present();
+        }}
+      >
+        <View style={styles.cardHeaderRow}>
+          <Text style={styles.cardTitle}>Bucket #{item.position.bucketId}</Text>
+          <StatusTag
+            label={`${isGain ? "Gain" : "Loss"} ${isGain ? "+" : ""}${item.pnlAlgo.toFixed(2)} ALGO`}
+            variant={isGain ? "success" : "danger"}
+          />
+        </View>
+
+        <View style={styles.cardChipsRow}>
+          {item.symbols.map((symbol) => (
+            <AssetChip key={`${item.position.positionId}-${symbol}`} symbol={symbol} />
+          ))}
+        </View>
+
+        <View style={styles.cardMetricRow}>
+          <Text style={styles.metricLabel}>Deposited</Text>
+          <Text style={styles.metricValue}>{formatAlgo(item.depositedAlgo)} ALGO</Text>
+        </View>
+
+        <View style={styles.cardMetricRow}>
+          <Text style={styles.metricLabel}>Current</Text>
+          <Text style={styles.metricValue}>{formatAlgo(item.currentAlgo)} ALGO</Text>
+        </View>
+
+        <View style={styles.cardMetricRow}>
+          <Text style={styles.metricLabel}>P&L</Text>
+          <Text style={[styles.metricValue, isGain ? styles.gainText : styles.lossText]}>
+            {isGain ? "+" : ""}
+            {formatAlgo(item.pnlAlgo)} ALGO
+          </Text>
+        </View>
+
+        <View style={styles.contractRow}>
+          <Text style={styles.contractLabel}>Contract App ID</Text>
+          <Text style={styles.contractValue}>{CONTRACT_APP_IDS.CrescaBucketProtocol}</Text>
+        </View>
+
+        <View style={styles.tagRow}>
+          <StatusTag label={`Risk: ${risk}`} variant={risk === "High" ? "warning" : risk === "Medium" ? "info" : "success"} />
+          <StatusTag label={`${item.position.leverage}x`} variant="purple" />
+        </View>
+
+        <View style={styles.cardActionsRow}>
+          <View style={styles.cardActionCol}>
+            <PrimaryButton
+              label="Withdraw"
+              variant="outline"
+              style={styles.cardActionButton}
+              onPress={() => {
+                setSelectedPosition(item.position);
+                setWithdrawPercent(25);
+                withdrawSheetRef.current?.present();
+              }}
+            />
+          </View>
+
+          <View style={styles.cardActionCol}>
+            <PrimaryButton
+              label="Deposit More"
+              variant="black"
+              style={styles.cardActionButton}
+              onPress={() => {
+                setSelectedPosition(item.position);
+                setDepositAsset("ALGO");
+                setDepositAmount("");
+                depositSheetRef.current?.present();
+              }}
+            />
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderCuratedBasketCard = (item: (typeof BASKETS)[number]) => {
+    const leverage = DEFAULT_LEVERAGE;
+    const risk = riskFromLeverage(leverage);
+    const totalValue = item.assets.reduce((acc, asset) => acc + asset.weight, 0);
+
+    return (
+      <View
+        style={{
+          width: "100%",
+          marginRight: 0,
+          borderWidth: 1,
+          borderColor: C.borders.bDefault,
+          borderRadius: R.lg,
+          backgroundColor: C.surfaces.bgBase,
+          padding: S.md,
+          gap: 10,
+        }}
+      >
+        <Text style={{ ...T.h3, color: C.text.t1 }}>{item.name}</Text>
+
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {item.assets.slice(0, 4).map((asset) => (
+            <AssetChip key={`${item.id}-${asset.symbol}`} symbol={asset.symbol} />
+          ))}
+        </View>
+
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          <StatusTag
+            label={`Risk: ${risk}`}
+            variant={risk === "High" ? "warning" : risk === "Medium" ? "info" : "success"}
+          />
+          <StatusTag label={`${leverage}x`} variant="purple" />
+        </View>
+
+        <PrimaryButton
+          label="Trade"
+          variant="black"
+          onPress={() =>
+            router.push({
+              pathname: "/bundleTrade",
+              params: {
+                bundleId: item.id,
+                bundleName: item.name,
+                assets: JSON.stringify(item.assets),
+                totalValue: String(totalValue),
+              },
+            })
+          }
+        />
+      </View>
+    );
+  };
 
   return (
     <ScreenContainer style={styles.container}>
-
-      {/* ── Header ── */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Bundle Trading</Text>
-          <Text style={styles.subtitle}>5 curated baskets · Leveraged · Algorand testnet</Text>
-        </View>
-        {refreshing
-          ? <ActivityIndicator size="small" color={Colors.steel} />
-          : (
-            <TouchableOpacity
-              onPress={() => void loadPrices(true)}
-              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-              accessibilityRole="button"
-              accessibilityLabel="Refresh prices"
-            >
-              <Ionicons name="refresh" size={18} color={Colors.steel} />
-            </TouchableOpacity>
-          )
-        }
+        <TouchableOpacity
+          style={styles.headerIconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          onPress={() => router.back()}
+        >
+          <Ionicons name="arrow-back" size={20} color={C.text.t1} />
+        </TouchableOpacity>
+
+        <Text style={styles.headerTitle}>My Buckets</Text>
+
+        <TouchableOpacity
+          style={styles.newBucketButton}
+          accessibilityRole="button"
+          accessibilityLabel="Create new bucket"
+          onPress={() => {
+            setCreatedBucketId(null);
+            newBucketSheetRef.current?.present();
+          }}
+        >
+          <Ionicons name="add" size={14} color={C.text.t1} />
+          <Text style={styles.newBucketButtonText}>New</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.list}
-        showsVerticalScrollIndicator={false}
-      >
+      {errorMessage ? (
+        <View style={styles.messageError}>
+          <Text style={styles.messageErrorText}>{errorMessage}</Text>
+        </View>
+      ) : null}
 
-        {/* ── Open Positions section ── */}
-        {positions.length > 0 && (
-          <View style={styles.posSection}>
-            {/* Section header */}
-            <View style={styles.posSectionHead}>
-              <View style={styles.posPulse} />
-              <Text style={styles.posSectionTitle}>Open Positions</Text>
-              <Text style={styles.posSectionCount}>{positions.length}</Text>
+      {successMessage ? (
+        <View style={styles.messageSuccess}>
+          <Text style={styles.messageSuccessText}>{successMessage}</Text>
+        </View>
+      ) : null}
+
+      <FlatList
+        data={positionModels}
+        keyExtractor={(item) => String(item.position.positionId)}
+        renderItem={renderCard}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <View>
+            <View style={styles.summaryBar}>
+              <View>
+                <Text style={styles.summaryLabel}>Total positions</Text>
+                <Text style={styles.summaryValue}>{formatUsd(summary.currentTotal)}</Text>
+              </View>
+
+              <View style={styles.summaryRight}>
+                <Text style={[styles.summaryPct, summary.pct >= 0 ? styles.gainText : styles.lossText]}>
+                  {summary.pct >= 0 ? "▲" : "▼"} {Math.abs(summary.pct).toFixed(2)}%
+                </Text>
+                <Text style={styles.summarySub}>Collateral {formatAlgo(collateralAlgo)} ALGO</Text>
+              </View>
             </View>
 
-            {positions.map((pos) => (
-              <View key={pos.positionId} style={styles.posCardWrap}>
-                {closingId === pos.positionId
-                  ? (
-                    <View style={[styles.posCard, styles.posCardClosing]}>
-                      <ActivityIndicator size="small" color={Colors.loss} />
-                      <Text style={styles.closingText}>Closing position…</Text>
-                    </View>
-                  )
-                  : (
-                    <PositionCard
-                      position={pos}
-                      pnl={pnls[pos.positionId] ?? null}
-                      pnlLoading={pnlLoading && !(pos.positionId in pnls)}
-                      onClose={() => handleClosePosition(pos)}
-                    />
-                  )
-                }
-              </View>
-            ))}
-          </View>
-        )}
+            <Text
+              style={{
+                ...T.smBold,
+                color: C.text.t2,
+                marginHorizontal: H_PAD,
+                marginBottom: 8,
+              }}
+            >
+              Curated Baskets
+            </Text>
 
-        {/* ── Bundle list ── */}
-        <View style={styles.bundlesHead}>
-          <Text style={styles.bundlesSectionTitle}>All Bundles</Text>
-        </View>
-
-        {loading
-          ? BASKETS.map((b) => <SkeletonCard key={b.id} />)
-          : (
-            <Animated.View style={{ opacity: fadeAnim }}>
-              {BASKETS.map((basket, i) => (
-                <View key={basket.id} style={i < BASKETS.length - 1 ? styles.cardGap : undefined}>
-                  <BundleCard
-                    basket={basket}
-                    prices={prices}
-                    onPress={() => handleOpen(basket)}
-                  />
-                </View>
+            <View
+              style={{
+                paddingHorizontal: H_PAD,
+                paddingBottom: S.sm,
+                gap: 12,
+              }}
+            >
+              {BASKETS.map((item) => (
+                <React.Fragment key={item.id}>{renderCuratedBasketCard(item)}</React.Fragment>
               ))}
-            </Animated.View>
-          )
+            </View>
+          </View>
         }
-
-        <Text style={styles.footer}>
-          Prices from Pyth Network · Executes on Algorand testnet
-        </Text>
-      </ScrollView>
-
-      <AppNoticeModal
-        visible={!!notice}
-        title={notice?.title ?? ''}
-        message={notice?.message ?? ''}
-        tone={notice?.tone ?? 'info'}
-        actions={notice?.actions}
-        onClose={() => setNotice(null)}
+        ListEmptyComponent={
+          !loading ? (
+            <View style={styles.emptyWrap}>
+              <Ionicons name="cube-outline" size={32} color={C.text.t2} />
+              <Text style={styles.emptyTitle}>No active positions</Text>
+              <Text style={styles.emptySubtitle}>Create your first bucket</Text>
+              <PrimaryButton
+                label="Create Bucket"
+                variant="black"
+                style={styles.emptyCta}
+                onPress={() => newBucketSheetRef.current?.present()}
+              />
+            </View>
+          ) : null
+        }
+        ListFooterComponent={
+          loading ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator size="small" color={C.brand.teal} />
+              <Text style={styles.loadingText}>Loading buckets...</Text>
+            </View>
+          ) : null
+        }
       />
 
+      <CrescaSheet sheetRef={depositSheetRef} snapPoints={["70%"]} title="Deposit to Bucket">
+        <View style={styles.sheetWrap}>
+          <View style={styles.assetSelectorRow}>
+            {DEPOSIT_ASSET_OPTIONS.map((asset) => {
+              const active = depositAsset === asset;
+              return (
+                <TouchableOpacity
+                  key={asset}
+                  style={[styles.assetPill, active ? styles.assetPillActive : styles.assetPillInactive]}
+                  onPress={() => setDepositAsset(asset)}
+                >
+                  <Text style={[styles.assetPillText, active ? styles.assetPillTextActive : styles.assetPillTextInactive]}>
+                    {asset}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <CrescaInput
+            label="Amount"
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+            value={depositAmount}
+            onChangeText={(value) => setDepositAmount(sanitizeNumberInput(value))}
+          />
+
+          <View style={styles.maxRow}>
+            <Text style={styles.maxLabel}>Max: {formatAlgo(walletAlgo)} ALGO</Text>
+            <TouchableOpacity
+              style={styles.maxButton}
+              onPress={() => setDepositAmount(walletAlgo > 0 ? walletAlgo.toFixed(4) : "")}
+            >
+              <Text style={styles.maxButtonText}>Max</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.previewText}>
+            You will receive {formatAlgo(Number(depositAmount) || 0)} gALGO
+          </Text>
+
+          <PrimaryButton
+            label="Deposit"
+            variant="teal"
+            loading={pendingAction === "deposit"}
+            onPress={handleDeposit}
+          />
+        </View>
+      </CrescaSheet>
+
+      <CrescaSheet sheetRef={withdrawSheetRef} snapPoints={["65%"]} title="Withdraw">
+        <View style={styles.sheetWrap}>
+          <View style={styles.withdrawQuickRow}>
+            {WITHDRAW_OPTIONS.map((pct) => {
+              const active = withdrawPercent === pct;
+              return (
+                <TouchableOpacity
+                  key={pct}
+                  style={[styles.withdrawPill, active ? styles.withdrawPillActive : styles.withdrawPillInactive]}
+                  onPress={() => setWithdrawPercent(pct)}
+                >
+                  <Text
+                    style={[
+                      styles.withdrawPillText,
+                      active ? styles.withdrawPillTextActive : styles.withdrawPillTextInactive,
+                    ]}
+                  >
+                    {pct === 100 ? "Max" : `${pct}%`}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.readonlyAmountBox}>
+            <Text style={styles.readonlyAmountLabel}>Amount</Text>
+            <Text style={styles.readonlyAmountValue}>{formatAlgo(withdrawAmount)} ALGO</Text>
+          </View>
+
+          <Text style={styles.previewText}>Est. received: {formatUsd(withdrawAmount)} USDC</Text>
+
+          <TouchableOpacity
+            style={styles.dangerOutlineButton}
+            onPress={handleWithdraw}
+            disabled={pendingAction === "withdraw"}
+          >
+            {pendingAction === "withdraw" ? (
+              <ActivityIndicator size="small" color={C.semantic.danger} />
+            ) : (
+              <Text style={styles.dangerOutlineText}>Withdraw</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </CrescaSheet>
+
+      <CrescaSheet sheetRef={newBucketSheetRef} snapPoints={["85%"]} title="Create Bucket">
+        <View style={styles.sheetWrap}>
+          <Text style={styles.sectionLabel}>Step 1: Select assets</Text>
+          <View style={styles.multiAssetWrap}>
+            {ALL_ASSETS.map(([symbol]) => {
+              const selected = selectedBucketAssets.includes(symbol);
+              return (
+                <TouchableOpacity
+                  key={symbol}
+                  style={styles.multiAssetRow}
+                  onPress={() => toggleBucketAsset(symbol)}
+                >
+                  <Ionicons
+                    name={selected ? "checkbox" : "square-outline"}
+                    size={18}
+                    color={selected ? C.brand.teal : C.text.t2}
+                  />
+                  <AssetChip symbol={symbol} />
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={styles.sectionLabel}>Step 2: Allocation</Text>
+          <View style={styles.progressWrap}>
+            <View style={styles.progressBarBase}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  {
+                    width: `${Math.min(100, Math.max(0, bucketWeightTotal))}%`,
+                    backgroundColor: bucketWeightTotal === 100 ? C.brand.teal : C.semantic.warning,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={styles.progressText}>Total {bucketWeightTotal}%</Text>
+          </View>
+
+          {selectedBucketAssets.map((symbol) => (
+            <View key={`slider-${symbol}`} style={styles.sliderRow}>
+              <View style={styles.sliderHead}>
+                <Text style={styles.sliderSymbol}>{symbol}</Text>
+                <Text style={styles.sliderPct}>{bucketWeights[symbol] ?? 0}%</Text>
+              </View>
+              <Slider
+                minimumValue={0}
+                maximumValue={100}
+                step={1}
+                value={bucketWeights[symbol] ?? 0}
+                minimumTrackTintColor={C.brand.teal}
+                maximumTrackTintColor={C.borders.bDefault}
+                thumbTintColor={C.brand.teal}
+                onValueChange={(nextValue) => {
+                  setBucketWeights((prev) => ({
+                    ...prev,
+                    [symbol]: Math.round(nextValue),
+                  }));
+                }}
+              />
+            </View>
+          ))}
+
+          <PrimaryButton
+            label="Create Bucket"
+            variant="black"
+            loading={pendingAction === "create"}
+            onPress={handleCreateBucket}
+            disabled={bucketWeightTotal !== 100 || selectedBucketAssets.length === 0}
+          />
+
+          {createdBucketId !== null ? (
+            <Text style={styles.contractPreviewText}>
+              Contract App ID: {CONTRACT_APP_IDS.CrescaBucketProtocol} | Bucket ID: {createdBucketId}
+            </Text>
+          ) : null}
+        </View>
+      </CrescaSheet>
+
+      <CrescaSheet sheetRef={detailSheetRef} snapPoints={["85%"]} title="Bucket Detail">
+        {selectedPosition ? (
+          <View style={styles.sheetWrap}>
+            <View style={styles.detailHeaderRow}>
+              <Text style={styles.detailTitle}>Position #{selectedPosition.positionId}</Text>
+              <StatusTag
+                label={selectedPositionPnl >= 0 ? "Positive" : "Negative"}
+                variant={selectedPositionPnl >= 0 ? "success" : "danger"}
+              />
+            </View>
+
+            <View style={styles.detailMetricRow}>
+              <Text style={styles.metricLabel}>Bucket</Text>
+              <Text style={styles.metricValue}>#{selectedPosition.bucketId}</Text>
+            </View>
+
+            <View style={styles.detailMetricRow}>
+              <Text style={styles.metricLabel}>Leverage</Text>
+              <Text style={styles.metricValue}>{selectedPosition.leverage}x</Text>
+            </View>
+
+            <View style={styles.detailMetricRow}>
+              <Text style={styles.metricLabel}>Margin</Text>
+              <Text style={styles.metricValue}>{formatAlgo(selectedPosition.marginAlgo)} ALGO</Text>
+            </View>
+
+            <View style={styles.detailMetricRow}>
+              <Text style={styles.metricLabel}>Unrealized P&L</Text>
+              <Text style={[styles.metricValue, selectedPositionPnl >= 0 ? styles.gainText : styles.lossText]}>
+                {selectedPositionPnl >= 0 ? "+" : ""}
+                {formatAlgo(selectedPositionPnl)} ALGO
+              </Text>
+            </View>
+
+            <Text style={styles.sectionLabel}>Tx History</Text>
+            {selectedPositionTxRows.length === 0 ? (
+              <Text style={styles.mutedText}>No transactions yet.</Text>
+            ) : (
+              selectedPositionTxRows.map((row) => (
+                <TouchableOpacity
+                  key={`${row.type}-${row.txId}-${row.timestamp}`}
+                  style={styles.txRow}
+                  onPress={() =>
+                    Linking.openURL(`https://lora.algokit.io/testnet/transaction/${row.txId}`)
+                  }
+                >
+                  <View>
+                    <Text style={styles.txType}>{txTypeLabel(row.type)}</Text>
+                    <Text style={styles.txTime}>{new Date(row.timestamp).toLocaleString()}</Text>
+                  </View>
+                  <Text style={styles.txLink}>View</Text>
+                </TouchableOpacity>
+              ))
+            )}
+
+            <Text style={styles.sectionLabel}>Contract Metadata</Text>
+            <View style={styles.metaBox}>
+              <Text style={styles.metaLine}>App ID: {CONTRACT_APP_IDS.CrescaBucketProtocol}</Text>
+              <Text style={styles.metaLine}>Owner: {shortAddress(walletAddress)}</Text>
+              <Text style={styles.metaLine}>Collateral: {formatAlgo(collateralAlgo)} ALGO</Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.dangerOutlineButton}
+              onPress={handleClosePosition}
+              disabled={pendingAction === "close"}
+            >
+              {pendingAction === "close" ? (
+                <ActivityIndicator size="small" color={C.semantic.danger} />
+              ) : (
+                <Text style={styles.dangerOutlineText}>Close Position</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </CrescaSheet>
     </ScreenContainer>
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.bg.screen },
-
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.lg,
-    paddingBottom: Spacing.md,
-  },
-  title:    { fontSize: Typography.xl, fontWeight: Typography.bold, color: Colors.text.primary },
-  subtitle: { fontSize: Typography.xs, color: Colors.text.muted, marginTop: 2 },
-
-  list: { paddingHorizontal: Spacing.lg, paddingBottom: 40 },
-  cardGap: { marginBottom: Spacing.lg },
-
-  // ── Open Positions section ──
-  posSection: {
-    marginBottom: Spacing.xl,
-  },
-  posSectionHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: Spacing.md,
-  },
-  posPulse: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.gain,
-  },
-  posSectionTitle: {
-    fontSize: Typography.sm,
-    fontWeight: Typography.bold,
-    color: Colors.text.primary,
+  container: {
     flex: 1,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    backgroundColor: C.surfaces.bgBase,
   },
-  posSectionCount: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.bold,
-    color: Colors.gain,
-    backgroundColor: Colors.gainBg + '44',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: Radius.full,
+  header: {
+    height: 56,
+    paddingHorizontal: H_PAD,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: C.borders.bDefault,
   },
-  posCardWrap: { marginBottom: Spacing.md },
-
-  posCard: {
-    backgroundColor: Colors.bg.card,
-    borderRadius: Radius.xl,
+  headerIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    ...T.h2,
+    color: C.text.t1,
+  },
+  newBucketButton: {
+    minHeight: 32,
+    paddingHorizontal: 12,
+    borderRadius: R.full,
     borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-    ...Shadow.card,
+    borderColor: C.borders.bDefault,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: C.surfaces.bgBase,
   },
-  posCardClosing: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.md,
-    padding: Spacing.xl,
-    opacity: 0.7,
+  newBucketButtonText: {
+    ...T.smBold,
+    color: C.text.t1,
   },
-  closingText: { fontSize: Typography.sm, color: Colors.loss },
-
-  posAccent: {
-    position: 'absolute',
-    left: 0, top: 0, bottom: 0,
-    width: 3,
-    borderTopLeftRadius: Radius.xl,
-    borderBottomLeftRadius: Radius.xl,
+  messageError: {
+    marginTop: S.sm,
+    marginHorizontal: H_PAD,
+    backgroundColor: "rgba(240,68,56,0.08)",
+    borderWidth: 1,
+    borderColor: C.semantic.danger,
+    borderRadius: R.md,
+    padding: 10,
   },
-  posHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    paddingTop: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.sm,
+  messageErrorText: {
+    ...T.sm,
+    color: C.semantic.danger,
   },
-  posName: {
-    fontSize: Typography.base,
-    fontWeight: Typography.bold,
-    color: Colors.text.primary,
+  messageSuccess: {
+    marginTop: S.sm,
+    marginHorizontal: H_PAD,
+    backgroundColor: "rgba(18,183,106,0.08)",
+    borderWidth: 1,
+    borderColor: C.semantic.success,
+    borderRadius: R.md,
+    padding: 10,
   },
-  posMeta: {
-    fontSize: Typography.xs,
-    color: Colors.text.muted,
+  messageSuccessText: {
+    ...T.sm,
+    color: C.semantic.success,
+  },
+  listContent: {
+    paddingBottom: S.xl,
+    flexGrow: 1,
+  },
+  summaryBar: {
+    marginTop: S.md,
+    marginBottom: S.sm,
+    marginHorizontal: H_PAD,
+    borderRadius: 12,
+    backgroundColor: C.surfaces.bgSurface,
+    padding: S.md,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  summaryLabel: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  summaryValue: {
+    ...T.h2,
+    color: C.text.t1,
     marginTop: 2,
   },
-  levBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: Radius.full,
-    borderWidth: 1,
+  summaryRight: {
+    alignItems: "flex-end",
   },
-  levBadgeText: { fontSize: Typography.xs, fontWeight: Typography.bold },
-
-  posDivider: { height: 1, backgroundColor: Colors.divider, marginHorizontal: Spacing.lg },
-
-  pnlRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+  summaryPct: {
+    ...T.smBold,
   },
-  pnlLabel: { fontSize: Typography.xs, color: Colors.text.muted, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
-  pnlValueRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  pnlValue:    { fontSize: Typography.lg, fontWeight: Typography.bold },
-  pnlSkeleton: { width: 120, height: 22, borderRadius: Radius.sm, backgroundColor: Colors.bg.subtle },
-  pnlPctBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.full },
-  pnlPctText:  { fontSize: Typography.xs, fontWeight: Typography.bold },
-
-  closeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: Colors.lossBg + '33',
-    borderWidth: 1,
-    borderColor: Colors.loss + '55',
-    borderRadius: Radius.md,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 8,
-    minWidth: 44,
-    minHeight: 44,
-    justifyContent: 'center',
+  summarySub: {
+    ...T.sm,
+    color: C.text.t2,
+    marginTop: 2,
   },
-  closeBtnText: { fontSize: Typography.xs, fontWeight: Typography.bold, color: Colors.loss },
-
-  txRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.sm,
-  },
-  txText: { fontSize: 10, color: Colors.text.muted },
-
-  // ── All Bundles label ──
-  bundlesHead: { marginBottom: Spacing.md },
-  bundlesSectionTitle: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.bold,
-    color: Colors.steel,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-
-  // ── Bundle card ──
   card: {
-    backgroundColor: Colors.bg.card,
-    borderRadius: Radius.xl,
+    marginHorizontal: H_PAD,
+    marginVertical: 6,
     borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-    ...Shadow.card,
+    borderColor: C.borders.bDefault,
+    borderRadius: R.lg,
+    backgroundColor: C.surfaces.bgBase,
+    padding: S.md,
   },
-  cardAccent: {
-    position: 'absolute',
-    left: 0, top: 0, bottom: 0,
-    width: 3,
-    borderTopLeftRadius: Radius.xl,
-    borderBottomLeftRadius: Radius.xl,
+  cardHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
   },
-  cardHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    paddingTop: Spacing.lg,
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.sm,
+  cardTitle: {
+    ...T.h3,
+    color: C.text.t1,
   },
-  iconWrap: {
-    width: 40, height: 40,
-    borderRadius: Radius.md,
+  cardChipsRow: {
+    marginTop: S.sm,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  cardMetricRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  metricLabel: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  metricValue: {
+    ...T.bodyMd,
+    color: C.text.t1,
+  },
+  gainText: {
+    color: C.semantic.success,
+  },
+  lossText: {
+    color: C.semantic.danger,
+  },
+  contractRow: {
+    marginTop: S.sm,
+    paddingTop: S.sm,
+    borderTopWidth: 1,
+    borderTopColor: C.borders.bDefault,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  contractLabel: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  contractValue: {
+    ...T.address,
+    color: C.text.t1,
+  },
+  tagRow: {
+    marginTop: S.sm,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  cardActionsRow: {
+    marginTop: S.md,
+    flexDirection: "row",
+    gap: 10,
+  },
+  cardActionCol: {
+    flex: 1,
+  },
+  cardActionButton: {
+    width: "100%",
+  },
+  emptyWrap: {
+    marginTop: 80,
+    alignItems: "center",
+    paddingHorizontal: H_PAD,
+  },
+  emptyTitle: {
+    ...T.h2,
+    color: C.text.t1,
+    marginTop: S.sm,
+  },
+  emptySubtitle: {
+    ...T.body,
+    color: C.text.t2,
+    marginTop: 2,
+  },
+  emptyCta: {
+    marginTop: S.md,
+    minWidth: 180,
+  },
+  loadingWrap: {
+    marginTop: S.lg,
+    alignItems: "center",
+    gap: 8,
+  },
+  loadingText: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  sheetWrap: {
+    gap: 12,
+    paddingTop: 6,
+    paddingBottom: 16,
+  },
+  assetSelectorRow: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  assetPill: {
+    borderRadius: R.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderWidth: 1,
-    backgroundColor: Colors.bg.subtle,
-    justifyContent: 'center', alignItems: 'center',
   },
-  cardTitleCol: { flex: 1 },
-  cardName:     { fontSize: Typography.base, fontWeight: Typography.bold, color: Colors.text.primary },
-  cardDesc:     { fontSize: Typography.xs, color: Colors.text.muted, marginTop: 2 },
-  riskBadge: {
-    paddingHorizontal: Spacing.sm, paddingVertical: 3,
-    borderRadius: Radius.full,
+  assetPillActive: {
+    backgroundColor: C.brand.black,
+    borderColor: C.brand.black,
   },
-  riskText: { fontSize: Typography.xs, fontWeight: Typography.bold },
-
-  chipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.md,
+  assetPillInactive: {
+    backgroundColor: C.surfaces.bgSurface,
+    borderColor: C.borders.bDefault,
   },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: Colors.bg.subtle,
-    borderRadius: Radius.full,
-    paddingHorizontal: 10,
+  assetPillText: {
+    ...T.smBold,
+  },
+  assetPillTextActive: {
+    color: C.text.tInv,
+  },
+  assetPillTextInactive: {
+    color: C.text.t2,
+  },
+  maxRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  maxLabel: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  maxButton: {
+    borderWidth: 1,
+    borderColor: C.brand.teal,
+    borderRadius: R.full,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  maxButtonText: {
+    ...T.smBold,
+    color: C.brand.teal,
+  },
+  previewText: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  withdrawQuickRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  withdrawPill: {
+    borderRadius: R.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+  withdrawPillActive: {
+    backgroundColor: C.brand.black,
+    borderColor: C.brand.black,
+  },
+  withdrawPillInactive: {
+    backgroundColor: C.surfaces.bgSurface,
+    borderColor: C.borders.bDefault,
+  },
+  withdrawPillText: {
+    ...T.smBold,
+  },
+  withdrawPillTextActive: {
+    color: C.text.tInv,
+  },
+  withdrawPillTextInactive: {
+    color: C.text.t2,
+  },
+  readonlyAmountBox: {
+    borderWidth: 1,
+    borderColor: C.borders.bDefault,
+    borderRadius: R.md,
+    backgroundColor: C.surfaces.bgSurface,
+    padding: 12,
+  },
+  readonlyAmountLabel: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  readonlyAmountValue: {
+    ...T.h3,
+    color: C.text.t1,
+    marginTop: 2,
+  },
+  dangerOutlineButton: {
+    borderWidth: 1,
+    borderColor: C.semantic.danger,
+    borderRadius: R.full,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(240,68,56,0.04)",
+  },
+  dangerOutlineText: {
+    ...T.btn,
+    color: C.semantic.danger,
+  },
+  sectionLabel: {
+    ...T.smBold,
+    color: C.text.t1,
+    marginTop: 4,
+  },
+  multiAssetWrap: {
+    gap: 8,
+  },
+  multiAssetRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
-  chipSymbol: { fontSize: Typography.xs, fontWeight: Typography.bold, color: Colors.text.primary },
-  chipPct:    { fontSize: Typography.xs, color: Colors.text.muted },
-
-  divider: { height: 1, backgroundColor: Colors.divider, marginHorizontal: Spacing.lg },
-
-  pricesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+  progressWrap: {
+    gap: 6,
+  },
+  progressBarBase: {
+    height: 8,
+    borderRadius: R.full,
+    backgroundColor: C.surfaces.bgSunken,
+    overflow: "hidden",
+  },
+  progressBarFill: {
+    height: 8,
+    borderRadius: R.full,
+  },
+  progressText: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  sliderRow: {
     gap: 4,
   },
-  priceCell: {
-    width: '48%',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 5,
-    paddingHorizontal: Spacing.sm,
-    backgroundColor: Colors.bg.subtle,
-    borderRadius: Radius.sm,
+  sliderHead: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  priceSym: { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.text.secondary },
-  priceVal: { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.text.primary },
-
-  ctaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+  sliderSymbol: {
+    ...T.bodyMd,
+    color: C.text.t1,
   },
-  ctaLabel: { fontSize: Typography.sm, fontWeight: Typography.bold },
-
-  footer: {
-    textAlign: 'center',
-    fontSize: Typography.xs,
-    color: Colors.text.muted,
-    marginTop: Spacing.xl,
-    marginBottom: Spacing.sm,
+  sliderPct: {
+    ...T.smBold,
+    color: C.brand.tealDim,
   },
-
-  // ── Skeletons ──
-  skelHead:  { height: 40, borderRadius: Radius.md, backgroundColor: Colors.bg.subtle, margin: Spacing.lg, marginBottom: Spacing.sm },
-  skelDesc:  { height: 14, borderRadius: Radius.sm, backgroundColor: Colors.bg.subtle, marginHorizontal: Spacing.lg, marginBottom: Spacing.md, width: '60%' },
-  skelRow:   { flexDirection: 'row', gap: 6, paddingHorizontal: Spacing.lg, marginBottom: Spacing.md },
-  skelChip:  { height: 26, borderRadius: Radius.full, backgroundColor: Colors.bg.subtle },
-  skelGrid:  { flexDirection: 'row', flexWrap: 'wrap', gap: 4, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm },
-  skelPrice: { width: '48%', height: 30, borderRadius: Radius.sm, backgroundColor: Colors.bg.subtle },
-  skelCta:   { height: 20, borderRadius: Radius.sm, backgroundColor: Colors.bg.subtle, margin: Spacing.lg, marginTop: Spacing.sm, width: '40%', alignSelf: 'flex-end' },
+  contractPreviewText: {
+    ...T.address,
+    color: C.text.t1,
+    marginTop: 4,
+  },
+  detailHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  detailTitle: {
+    ...T.h2,
+    color: C.text.t1,
+    flex: 1,
+  },
+  detailMetricRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  mutedText: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  txRow: {
+    borderWidth: 1,
+    borderColor: C.borders.bDefault,
+    borderRadius: R.md,
+    padding: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: C.surfaces.bgSurface,
+  },
+  txType: {
+    ...T.smBold,
+    color: C.text.t1,
+  },
+  txTime: {
+    ...T.sm,
+    color: C.text.t2,
+    marginTop: 2,
+  },
+  txLink: {
+    ...T.smBold,
+    color: C.brand.purple,
+  },
+  metaBox: {
+    borderWidth: 1,
+    borderColor: C.borders.bDefault,
+    borderRadius: R.md,
+    padding: 12,
+    backgroundColor: C.surfaces.bgSurface,
+    gap: 6,
+  },
+  metaLine: {
+    ...T.address,
+    color: C.text.t1,
+  },
 });
