@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Cresca | Smart Wallet on Algorand</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Oswald:wght@300;400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Manrope', sans-serif;
+      background: #010203;
+      color: #eef2f5;
+      overflow-x: hidden;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+    }
+
+    /* Noise */
+    body::after {
+      content: '';
+      position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      opacity: 0.022;
+    }
+
+    /* Aurora */
+    .aurora {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    }
+    .aurora-blob {
+      position: absolute; border-radius: 50%;
+      filter: blur(100px);
+    }
+    .ab1 { width: 75vw; height: 75vw; left: -25vw; top: -35vw; background: radial-gradient(circle, rgba(86,242,192,0.11), transparent 65%); animation: auraFloat 24s ease-in-out infinite; }
+    .ab2 { width: 55vw; height: 55vw; right: -15vw; top: 5vh; background: radial-gradient(circle, rgba(129,140,248,0.09), transparent 65%); animation: auraFloat 30s ease-in-out infinite reverse; }
+    .ab3 { width: 38vw; height: 38vw; left: 25vw; bottom: -8vw; background: radial-gradient(circle, rgba(86,242,192,0.07), transparent 65%); animation: auraFloat 20s ease-in-out infinite; animation-delay: -9s; }
+    @keyframes auraFloat {
+      0%,100% { transform: translate(0,0) scale(1); }
+      33% { transform: translate(28px,-18px) scale(1.06); }
+      66% { transform: translate(-18px,26px) scale(0.97); }
+    }
+
+    /* Grid */
+    .bg-grid {
+      position: fixed; inset: 0; z-index: 1; pointer-events: none;
+      background-image:
+        linear-gradient(to right, rgba(255,255,255,0.022) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,0.022) 1px, transparent 1px);
+      background-size: 54px 54px;
+      mask-image: radial-gradient(ellipse at 50% 0%, black 10%, transparent 80%);
+    }
+
+    .site { position: relative; z-index: 2; }
+
+    /* Animations */
+    @keyframes tickerScroll { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+    @keyframes livePulse {
+      0%,100% { opacity:1; box-shadow: 0 0 8px rgba(86,242,192,0.8); }
+      50% { opacity: 0.4; box-shadow: 0 0 0 rgba(86,242,192,0); }
+    }
+    @keyframes flowRight { to { left: 120%; } }
+    @keyframes flowLeft { 0% { right: 120%; } to { right: -40%; } }
+
+    /* Reveal */
+    .reveal { opacity: 0; transform: translateY(14px); transition: opacity 0.65s ease, transform 0.65s ease; }
+    .reveal.vis { opacity: 1; transform: translateY(0); }
+    .reveal.d1 { transition-delay: 0.1s; }
+    .reveal.d2 { transition-delay: 0.2s; }
+    .reveal.d3 { transition-delay: 0.3s; }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .hero-grid { grid-template-columns: 1fr !important; padding-top: 50px !important; }
+      .engines-grid { grid-template-columns: 1fr !important; }
+      .why-grid { grid-template-columns: 1fr !important; }
+      .steps-grid { grid-template-columns: 1fr !important; }
+      .dart-body { grid-template-columns: 1fr !important; }
+      .form-grid { grid-template-columns: 1fr !important; }
+    }
+
+    /* Tweaks panel */
+    .tweaks-panel {
+      position: fixed; bottom: 22px; right: 22px; z-index: 200;
+      width: 250px;
+      border: 1px solid rgba(86,242,192,0.2);
+      border-radius: 14px;
+      background: rgba(2,5,6,0.96);
+      backdrop-filter: blur(24px);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+      overflow: hidden;
+    }
+    .tweaks-header {
+      padding: 11px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: rgba(86,242,192,0.7);
+      display: flex; align-items: center; gap: 7px;
+    }
+    .tweaks-body { padding: 13px 14px; }
+    .tweak-row { margin-bottom: 13px; }
+    .tweak-row:last-child { margin-bottom: 0; }
+    .tweak-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.12em;
+      color: #3a4450; margin-bottom: 7px;
+    }
+    .tweak-opts { display: flex; gap: 5px; flex-wrap: wrap; }
+    .tweak-opt {
+      padding: 0.28rem 0.62rem; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.07);
+      background: none; color: #5a6670;
+      font-family: 'Manrope', sans-serif; font-size: 0.75rem;
+      cursor: pointer; transition: all 0.16s;
+    }
+    .tweak-opt:hover { color: #cdd8e0; border-color: rgba(255,255,255,0.14); }
+    .tweak-opt.on {
+      background: rgba(86,242,192,0.09);
+      border-color: rgba(86,242,192,0.28);
+      color: #56f2c0;
+    }
+  </style>
+</head>
+<body>
+  <div class="aurora" aria-hidden="true">
+    <div class="aurora-blob ab1"></div>
+    <div class="aurora-blob ab2"></div>
+    <div class="aurora-blob ab3"></div>
+  </div>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div id="root"></div>
+
+  <script type="text/babel" src="components/CrescaNav.jsx"></script>
+  <script type="text/babel" src="components/CrescaHero.jsx"></script>
+  <script type="text/babel" src="components/CrescaSections.jsx"></script>
+  <script type="text/babel" src="components/CrescaFeatures.jsx"></script>
+
+  <script type="text/babel">
+    const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+      "accent": "gold",
+      "gridVisible": "on",
+      "panelStyle": "glass"
+    }/*EDITMODE-END*/;
+
+    function TweaksPanel({ visible }) {
+      const [accent, setAccent] = React.useState(TWEAK_DEFAULTS.accent);
+      const [grid, setGrid] = React.useState(TWEAK_DEFAULTS.gridVisible);
+
+      React.useEffect(() => {
+        const colors = { mint:'#56f2c0', indigo:'#818cf8', gold:'#f7d774', rose:'#ff7a8a' };
+        document.documentElement.style.setProperty('--accent', colors[accent] || colors.mint);
+        window.parent.postMessage({ type:'__edit_mode_set_keys', edits:{ accent, gridVisible:grid } }, '*');
+      }, [accent, grid]);
+
+      React.useEffect(() => {
+        const el = document.querySelector('.bg-grid');
+        if (el) el.style.opacity = grid === 'on' ? '1' : '0';
+      }, [grid]);
+
+      if (!visible) return null;
+      return (
+        <div className="tweaks-panel">
+          <div className="tweaks-header">
+            <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="6" cy="6" r="5"/><path d="M6 3v3l2 1"/></svg>
+            Tweaks
+          </div>
+          <div className="tweaks-body">
+            <div className="tweak-row">
+              <div className="tweak-label">Accent color</div>
+              <div className="tweak-opts">
+                {[{id:'mint',l:'Mint'},{id:'indigo',l:'Indigo'},{id:'gold',l:'Gold'},{id:'rose',l:'Rose'}].map(o => (
+                  <button key={o.id} className={`tweak-opt${accent===o.id?' on':''}`} onClick={()=>setAccent(o.id)}>{o.l}</button>
+                ))}
+              </div>
+            </div>
+            <div className="tweak-row">
+              <div className="tweak-label">Background grid</div>
+              <div className="tweak-opts">
+                {['on','off'].map(v => (
+                  <button key={v} className={`tweak-opt${grid===v?' on':''}`} onClick={()=>setGrid(v)} style={{textTransform:'capitalize'}}>{v}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function useReveal() {
+      React.useEffect(() => {
+        const obs = new IntersectionObserver(entries => {
+          entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('vis'); });
+        }, { threshold: 0.1 });
+        document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+        return () => obs.disconnect();
+      }, []);
+    }
+
+    function App() {
+      const [tweaksOn, setTweaksOn] = React.useState(false);
+      useReveal();
+
+      React.useEffect(() => {
+        window.addEventListener('message', e => {
+          if (e.data?.type === '__activate_edit_mode') setTweaksOn(true);
+          if (e.data?.type === '__deactivate_edit_mode') setTweaksOn(false);
+        });
+        window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+      }, []);
+
+      return (
+        <>
+          <div className="site">
+            <CrescaNav/>
+            <main>
+              <CrescaHero/>
+              <CrescaEngines/>
+              <CrescaWhy/>
+              <CrescaSteps/>
+              <CrescaDart/>
+              <CrescaBasket/>
+              <CrescaCalendar/>
+              <CrescaTrust/>
+              <CrescaWaitlist/>
+            </main>
+            <CrescaFooter/>
+          </div>
+          <TweaksPanel visible={tweaksOn}/>
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  </script>
+</body>
+</html>
