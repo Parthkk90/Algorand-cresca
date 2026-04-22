@@ -40,9 +40,9 @@ wallet/
 
 Current testnet app IDs used by the wallet:
 
-- `CrescaPayments`: `758836614`
-- `CrescaCalendarPayments`: `758836616`
-- `CrescaBucketProtocol`: `758836627`
+- `CrescaPayments`: `758849047`
+- `CrescaCalendarPayments`: `758849049`
+- `CrescaBucketProtocol`: `758849061`
 - `CrescaDartSwap`: `758849063`
 
 References:
