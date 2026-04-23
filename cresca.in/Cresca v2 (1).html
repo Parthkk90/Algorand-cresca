@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="theme-color" content="#050A1A"/>
+  <title>Cresca | Smart Wallet on Algorand</title>
+  <meta name="description" content="The only smart wallet on Algorand — swap assets at oracle prices, trade multi-asset baskets, and automate on-chain payments with three live DeFi engines."/>
+  <meta name="keywords" content="Algorand, DeFi, smart wallet, DART swap, basket trading, calendar payments, non-custodial"/>
+  <meta name="robots" content="index, follow"/>
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website"/>
+  <meta property="og:title" content="Cresca | Smart Wallet on Algorand"/>
+  <meta property="og:description" content="Swap at oracle prices, trade baskets, automate payments — all inside one DeFi wallet on Algorand."/>
+  <meta property="og:url" content="https://cresca.in"/>
+  <meta property="og:site_name" content="Cresca"/>
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta name="twitter:title" content="Cresca | Smart Wallet on Algorand"/>
+  <meta name="twitter:description" content="Swap at oracle prices, trade baskets, automate payments — all inside one DeFi wallet."/>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+
+  <!-- React + Babel (dev preview) -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <style>
+    /* ─── Reset ─────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    /* ─── Design Tokens ──────────────────────────────── */
+    :root {
+      --bg:       #050A1A;
+      --bg2:      #080E20;
+      --sky:      #38BDF8;
+      --sky-dim:  rgba(56,189,248,0.65);
+      --sky-glow: rgba(56,189,248,0.18);
+      --sky-sub:  rgba(56,189,248,0.08);
+      --navy:     #1B2CC1;
+      --navy-mid: rgba(27,44,193,0.35);
+      --navy-sub: rgba(27,44,193,0.15);
+      --border:   rgba(56,189,248,0.1);
+      --border-md:rgba(56,189,248,0.2);
+      --text:     #E2EEFF;
+      --muted:    #7A9AB5;
+      --dim:      #3D5170;
+      --card:     linear-gradient(145deg,rgba(27,44,193,0.12),rgba(5,10,26,0.6));
+      --card-hov: linear-gradient(145deg,rgba(27,44,193,0.24),rgba(5,10,26,0.7));
+    }
+
+    /* ─── Base ───────────────────────────────────────── */
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow-x: hidden;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* ─── Scrollbar ──────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: rgba(56,189,248,0.18); border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(56,189,248,0.3); }
+
+    /* ─── Aurora background ──────────────────────────── */
+    .aurora {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    }
+    .aurora-blob {
+      position: absolute; border-radius: 50%; filter: blur(120px); will-change: transform;
+    }
+    .ab1 {
+      width: 80vw; height: 80vw; left: -30vw; top: -40vw;
+      background: radial-gradient(circle, rgba(27,44,193,0.28), transparent 65%);
+      animation: auraFloat 28s ease-in-out infinite;
+    }
+    .ab2 {
+      width: 60vw; height: 60vw; right: -18vw; top: 0;
+      background: radial-gradient(circle, rgba(56,189,248,0.07), transparent 65%);
+      animation: auraFloat 34s ease-in-out infinite reverse;
+    }
+    .ab3 {
+      width: 42vw; height: 42vw; left: 30vw; bottom: -10vw;
+      background: radial-gradient(circle, rgba(27,44,193,0.18), transparent 65%);
+      animation: auraFloat 22s ease-in-out infinite; animation-delay: -10s;
+    }
+    @keyframes auraFloat {
+      0%,100% { transform: translate(0,0) scale(1); }
+      33%      { transform: translate(30px,-20px) scale(1.05); }
+      66%      { transform: translate(-20px,28px) scale(0.97); }
+    }
+
+    /* ─── Grid overlay ───────────────────────────────── */
+    .bg-grid {
+      position: fixed; inset: 0; z-index: 1; pointer-events: none;
+      background-image:
+        linear-gradient(to right, rgba(56,189,248,0.025) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(56,189,248,0.025) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: radial-gradient(ellipse at 50% 0%, black 20%, transparent 75%);
+    }
+
+    /* ─── Z-layer ────────────────────────────────────── */
+    .site { position: relative; z-index: 2; }
+
+    /* ─── Animations ─────────────────────────────────── */
+    @keyframes tickerScroll { to { transform: translateX(-50%); } }
+
+    @keyframes livePulse {
+      0%,100% { opacity:1; box-shadow: 0 0 6px rgba(56,189,248,0.9); }
+      50%      { opacity:0.35; box-shadow: none; }
+    }
+
+    @keyframes flowRight { to { left: 120%; } }
+    @keyframes flowLeft  { 0% { right: 120%; } to { right: -40%; } }
+
+    @keyframes shimmer {
+      0%   { background-position: -200% center; }
+      100% { background-position: 200% center; }
+    }
+
+    @keyframes floatUp {
+      from { opacity: 0; transform: translateY(22px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ─── Scroll reveal ──────────────────────────────── */
+    .reveal {
+      opacity: 0; transform: translateY(18px);
+      transition: opacity 0.7s cubic-bezier(.22,1,.36,1),
+                  transform 0.7s cubic-bezier(.22,1,.36,1);
+    }
+    .reveal.vis { opacity: 1; transform: translateY(0); }
+    .reveal.d1  { transition-delay: 0.08s; }
+    .reveal.d2  { transition-delay: 0.16s; }
+    .reveal.d3  { transition-delay: 0.24s; }
+    .reveal.d4  { transition-delay: 0.32s; }
+
+    /* ─── Glass card base ────────────────────────────── */
+    .glass-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      backdrop-filter: blur(20px);
+      transition: border-color 0.28s, transform 0.28s, box-shadow 0.28s;
+    }
+    .glass-card:hover {
+      border-color: var(--border-md);
+      transform: translateY(-4px);
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(56,189,248,0.12), 0 0 40px rgba(56,189,248,0.05);
+    }
+
+    /* ─── Gradient text ──────────────────────────────── */
+    .grad-text {
+      background: linear-gradient(105deg, #1B2CC1 0%, #38BDF8 55%, #93C5FD 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ─── Sky pill / badge ───────────────────────────── */
+    .sky-badge {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: rgba(56,189,248,0.07);
+      border: 1px solid rgba(56,189,248,0.22);
+      border-radius: 999px;
+      padding: 0.3rem 0.9rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--sky);
+    }
+
+    /* ─── Section label ──────────────────────────────── */
+    .section-label {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+    }
+    .section-label::before {
+      content: '';
+      display: block; width: 26px; height: 2px; border-radius: 99px;
+      background: #E03030;
+      flex-shrink: 0;
+    }
+    .section-label span {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.58rem; text-transform: uppercase;
+      letter-spacing: 0.2em; color: #ffffff;
+      background: #C52020;
+      border-radius: 3px;
+      padding: 0.18rem 0.56rem;
+      line-height: 1.5;
+    }
+
+    /* ─── Section heading ────────────────────────────── */
+    .section-head h2 {
+      font-family: 'Oswald', sans-serif;
+      font-weight: 500; text-transform: uppercase;
+      letter-spacing: 0.02em; line-height: 0.92;
+      font-size: clamp(2.1rem, 4vw, 3rem);
+      color: var(--text);
+    }
+    .section-head p {
+      color: var(--muted); line-height: 1.76; font-size: 0.96rem;
+      max-width: 56ch; margin-top: 14px;
+    }
+
+    /* ─── Stat strip ──────────────────────────────────── */
+    .stat-strip {
+      display: flex; gap: 0; border: 1px solid var(--border);
+      border-radius: 14px; overflow: hidden; background: rgba(5,10,26,0.5);
+      backdrop-filter: blur(16px);
+    }
+    .stat-strip-item {
+      flex: 1; padding: 16px 20px; text-align: center;
+      border-right: 1px solid var(--border);
+      transition: background 0.2s;
+    }
+    .stat-strip-item:last-child { border-right: none; }
+    .stat-strip-item:hover { background: rgba(56,189,248,0.04); }
+    .stat-strip-item .val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.35rem; font-weight: 700;
+      color: var(--sky); letter-spacing: -0.02em;
+    }
+    .stat-strip-item .lbl {
+      font-size: 0.75rem; color: var(--muted); margin-top: 3px; letter-spacing: 0.01em;
+    }
+
+    /* ─── Feature bullet ──────────────────────────────── */
+    .feat-bullet {
+      display: flex; align-items: flex-start; gap: 12px;
+      font-size: 0.9rem; color: var(--muted); line-height: 1.7;
+    }
+    .feat-bullet::before {
+      content: '';
+      display: block; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--sky); box-shadow: 0 0 8px rgba(56,189,248,0.45);
+      margin-top: 7px; flex-shrink: 0;
+    }
+
+    /* ─── Input styles ────────────────────────────────── */
+    .cresca-input {
+      width: 100%; border-radius: 10px;
+      border: 1px solid rgba(56,189,248,0.2);
+      background: rgba(5,10,26,0.8);
+      color: var(--text);
+      font-family: 'Inter', sans-serif; font-size: 0.9rem;
+      padding: 0.74rem 1rem; outline: none;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .cresca-input:focus {
+      border-color: rgba(56,189,248,0.45);
+      background: rgba(27,44,193,0.08);
+    }
+    .cresca-input::placeholder { color: var(--dim); }
+
+    /* ─── Primary button ──────────────────────────────── */
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 0.78rem 1.5rem; border-radius: 10px;
+      background: linear-gradient(135deg, #1B2CC1, #0284C7);
+      color: #fff; font-family: 'Inter', sans-serif;
+      font-size: 0.9rem; font-weight: 600; text-decoration: none;
+      border: 1px solid rgba(56,189,248,0.4);
+      box-shadow: 0 6px 28px rgba(56,189,248,0.22), inset 0 1px 0 rgba(255,255,255,0.12);
+      transition: all 0.22s; cursor: pointer; letter-spacing: 0.01em;
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #2234D6, #0296DD);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 40px rgba(56,189,248,0.35), inset 0 1px 0 rgba(255,255,255,0.14);
+    }
+    .btn-primary:active { transform: translateY(0); }
+
+    /* ─── Ghost button ───────────────────────────────── */
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 0.78rem 1.4rem; border-radius: 10px;
+      background: rgba(56,189,248,0.05); color: #93C5FD;
+      border: 1px solid rgba(56,189,248,0.18);
+      font-family: 'Inter', sans-serif; font-size: 0.9rem;
+      font-weight: 500; text-decoration: none;
+      transition: all 0.2s; letter-spacing: 0.01em;
+    }
+    .btn-ghost:hover {
+      background: rgba(56,189,248,0.1);
+      border-color: rgba(56,189,248,0.35);
+      color: var(--sky);
+    }
+
+    /* ─── Flow line ──────────────────────────────────── */
+    .flow-line {
+      height: 2px; flex: 1;
+      background: rgba(56,189,248,0.07);
+      border-radius: 99px; position: relative; overflow: hidden;
+    }
+    .flow-line::after {
+      content: '';
+      position: absolute; top: 0; left: -40%;
+      width: 40%; height: 100%;
+      background: linear-gradient(90deg, transparent, var(--sky), transparent);
+      animation: flowRight 2.4s linear infinite;
+    }
+    .flow-line.rev::after {
+      left: auto; right: -40%;
+      background: linear-gradient(270deg, transparent, var(--sky), transparent);
+      animation: flowLeft 2.4s linear infinite;
+    }
+
+    /* ─── Ticker bar ─────────────────────────────────── */
+    .ticker-bar {
+      height: 32px; border-bottom: 1px solid rgba(56,189,248,0.08);
+      background: rgba(5,10,26,0.98);
+      overflow: hidden; display: flex; align-items: center;
+      position: relative; z-index: 50;
+    }
+    .ticker-live {
+      flex-shrink: 0; padding: 0 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.55rem; letter-spacing: 0.2em;
+      text-transform: uppercase; color: var(--sky);
+      border-right: 1px solid rgba(56,189,248,0.1);
+      height: 100%; display: flex; align-items: center;
+      background: rgba(56,189,248,0.04); white-space: nowrap;
+    }
+    .ticker-scroll {
+      display: flex; animation: tickerScroll 32s linear infinite;
+    }
+    .ticker-item {
+      display: flex; align-items: center; gap: 6px;
+      padding: 0 22px;
+      border-right: 1px solid rgba(255,255,255,0.03);
+      white-space: nowrap;
+      font-family: 'JetBrains Mono', monospace; font-size: 0.6rem;
+      letter-spacing: 0.04em;
+    }
+
+    /* ─── Nav ────────────────────────────────────────── */
+    nav.cresca-nav {
+      height: 64px; display: flex; align-items: center;
+      border-bottom: 1px solid rgba(56,189,248,0.08);
+      backdrop-filter: blur(28px) saturate(1.6);
+      transition: background 0.3s;
+    }
+    nav.cresca-nav.scrolled {
+      background: rgba(5,10,26,0.95);
+      border-bottom-color: rgba(56,189,248,0.12);
+    }
+
+    /* ─── Responsive breakpoints ─────────────────────── */
+    @media (max-width: 960px) {
+      .hero-grid       { grid-template-columns: 1fr !important; padding-top: 56px !important; }
+      .engines-grid    { grid-template-columns: 1fr !important; }
+      .why-grid        { grid-template-columns: 1fr !important; }
+      .steps-grid      { grid-template-columns: 1fr !important; }
+      .dart-body       { grid-template-columns: 1fr !important; }
+      .form-grid       { grid-template-columns: 1fr !important; }
+      .stat-strip      { flex-wrap: wrap; }
+      .stat-strip-item { min-width: 50%; border-right: none; border-bottom: 1px solid var(--border); }
+      .nav-links       { display: none !important; }
+    }
+
+    /* ─── Tweaks panel (edit mode) ───────────────────── */
+    .tweaks-panel {
+      position: fixed; bottom: 22px; right: 22px; z-index: 200;
+      width: 240px; border: 1px solid var(--border-md); border-radius: 14px;
+      background: rgba(5,10,26,0.97); backdrop-filter: blur(24px);
+      box-shadow: 0 24px 70px rgba(0,0,0,0.75); overflow: hidden;
+    }
+    .tweaks-header {
+      padding: 11px 14px; border-bottom: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace; font-size: 0.6rem;
+      text-transform: uppercase; letter-spacing: 0.14em;
+      color: rgba(56,189,248,0.65); display: flex; align-items: center; gap: 7px;
+    }
+    .tweaks-body { padding: 12px 14px; }
+    .tweak-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.12em;
+      color: var(--dim); margin-bottom: 7px;
+    }
+    .tweak-opt {
+      padding: 0.28rem 0.65rem; border-radius: 6px;
+      border: 1px solid var(--border); background: none;
+      color: var(--dim); font-family: 'Inter', sans-serif; font-size: 0.75rem;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .tweak-opt:hover { color: #93C5FD; border-color: var(--border-md); }
+    .tweak-opt.on { background: rgba(56,189,248,0.1); border-color: rgba(56,189,248,0.38); color: var(--sky); }
+  </style>
+</head>
+<body>
+  <!-- Background layers -->
+  <div class="aurora" aria-hidden="true">
+    <div class="aurora-blob ab1"></div>
+    <div class="aurora-blob ab2"></div>
+    <div class="aurora-blob ab3"></div>
+  </div>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <div id="root" class="site"></div>
+
+  <!-- Components (loaded in dependency order) -->
+  <script type="text/babel" src="components/CrescaNav.jsx"></script>
+  <script type="text/babel" src="components/CrescaHero.jsx"></script>
+  <script type="text/babel" src="components/CrescaSections.jsx"></script>
+  <script type="text/babel" src="components/CrescaFeatures.jsx"></script>
+
+  <script type="text/babel">
+    /* ── Scroll-reveal observer ── */
+    function useReveal() {
+      React.useEffect(() => {
+        const obs = new IntersectionObserver(entries => {
+          entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('vis'); });
+        }, { threshold: 0.08 });
+        document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+        return () => obs.disconnect();
+      }, []);
+    }
+
+    /* ── Edit-mode tweaks panel ── */
+    function TweaksPanel({ visible }) {
+      const [grid, setGrid] = React.useState('on');
+      React.useEffect(() => {
+        const el = document.querySelector('.bg-grid');
+        if (el) el.style.opacity = grid === 'on' ? '1' : '0';
+        window.parent.postMessage({ type:'__edit_mode_set_keys', edits:{ gridVisible:grid } }, '*');
+      }, [grid]);
+      if (!visible) return null;
+      return (
+        <div className="tweaks-panel">
+          <div className="tweaks-header">
+            <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="6" cy="6" r="5"/><path d="M6 3v3l2 1"/></svg>
+            Tweaks
+          </div>
+          <div className="tweaks-body">
+            <div className="tweak-label" style={{marginBottom:7}}>Background grid</div>
+            <div style={{display:'flex',gap:5}}>
+              {['on','off'].map(v => (
+                <button key={v} className={`tweak-opt${grid===v?' on':''}`} onClick={()=>setGrid(v)} style={{textTransform:'capitalize'}}>{v}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ── Root app ── */
+    function App() {
+      const [tweaksOn, setTweaksOn] = React.useState(false);
+      useReveal();
+      React.useEffect(() => {
+        window.addEventListener('message', e => {
+          if (e.data?.type === '__activate_edit_mode')   setTweaksOn(true);
+          if (e.data?.type === '__deactivate_edit_mode') setTweaksOn(false);
+        });
+        window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+      }, []);
+
+      return (
+        <>
+          <div className="site">
+            <CrescaNav/>
+            <main id="main-content">
+              <CrescaHero/>
+              <CrescaEngines/>
+              <CrescaWhy/>
+              <CrescaSteps/>
+              <CrescaDart/>
+              <CrescaBasket/>
+              <CrescaCalendar/>
+              <CrescaTrust/>
+              <CrescaWaitlist/>
+            </main>
+            <CrescaFooter/>
+          </div>
+          <TweaksPanel visible={tweaksOn}/>
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  </script>
+</body>
+</html>
