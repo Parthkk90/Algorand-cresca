@@ -1,0 +1,25 @@
+{
+  "name": "cresca-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "keeper": "tsx keeper/index.ts",
+    "keeper:dev": "tsx watch keeper/index.ts",
+    "seed-db": "tsx scripts/seed-db.ts",
+    "test-keeper": "tsx scripts/test-keeper.ts",
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "algosdk": "^3.1.0",
+    "@supabase/supabase-js": "^2.49.0",
+    "dotenv": "^16.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.0",
+    "typescript": "~5.9.2"
+  }
+}
