@@ -19,6 +19,57 @@ import algosdk, {
   ABIContract,
 } from 'algosdk';
 import { algorandService, AlgorandService, MICROALGO_PER_ALGO } from './algorandService';
+import { pythOracleService, PYTH_PRICE_FEEDS } from './pythOracleService';
+
+/**
+ * ASA ID → Pyth symbol mapping.
+ * Add entries here as new baskets are created.
+ * 0 = native ALGO (uses CoinGecko fallback via pythOracleService).
+ */
+const ASA_ID_TO_SYMBOL: Record<number, string> = {
+  0: 'ALGO',
+  10458941: 'USDC',
+  100: 'BTC',
+  101: 'ETH',
+  102: 'SOL',
+};
+
+/**
+ * Fetch Pyth Hermes prices for a set of ASA IDs and return:
+ *  - prices8dec: array of prices in 8-decimal integer form (same order as assetIds)
+ *  - publishTime: Unix seconds of the Hermes publish_time
+ *
+ * This is called immediately before every open/close/liquidate call so the
+ * contract receives a price that is < ~300ms old (well within the 60s window).
+ */
+async function fetchHermesPrices(assetIds: number[]): Promise<{
+  prices8dec: number[];
+  publishTime: number;
+}> {
+  const symbols = assetIds.map((id) => ASA_ID_TO_SYMBOL[id] ?? 'ALGO');
+  const unique = [...new Set(symbols)];
+  const priceMap = await pythOracleService.getPrices(unique);
+
+  // Lowest publish_time across all fetched assets (most conservative)
+  let publishTime = Math.floor(Date.now() / 1000);
+  for (const sym of unique) {
+    const p = priceMap[sym];
+    if (p) {
+      const t = Math.floor(p.timestamp / 1000);
+      if (t < publishTime) publishTime = t;
+    }
+  }
+
+  const prices8dec = symbols.map((sym) => {
+    const p = priceMap[sym];
+    if (!p || !Number.isFinite(p.price) || p.price <= 0) {
+      throw new Error(`Could not fetch Pyth price for ${sym} — open/close blocked`);
+    }
+    return Math.round(p.price * 1e8);
+  });
+
+  return { prices8dec, publishTime };
+}
 
 // ---------------------------------------------------------------------------
 // Deployed App IDs — update after running deploy.py on testnet
@@ -60,11 +111,12 @@ const BUCKET_ABI_METHODS: Record<string, string> = {
   create_bucket: 'create_bucket(uint64[],uint64[],uint64)uint64',
   deposit_collateral: 'deposit_collateral(pay)bool',
   withdraw_collateral: 'withdraw_collateral(uint64)bool',
-  open_position: 'open_position(uint64,bool,uint64)uint64',
-  close_position: 'close_position(uint64)uint64',
+  // Pyth pull oracle — prices + publish_time supplied by caller at tx time
+  open_position: 'open_position(uint64,bool,uint64,uint64[],uint64)uint64',
+  close_position: 'close_position(uint64,uint64[],uint64)uint64',
   rebalance_bucket: 'rebalance_bucket(uint64,uint64[])bool',
   update_oracle: 'update_oracle(uint64[],uint64[])bool',
-  liquidate_position: 'liquidate_position(address,uint64)bool',
+  liquidate_position: 'liquidate_position(address,uint64,uint64[],uint64)bool',
   get_collateral_balance: 'get_collateral_balance(address)uint64',
   get_unrealized_pnl: 'get_unrealized_pnl(address,uint64)uint64',
   get_total_positions: 'get_total_positions()uint64',
@@ -634,10 +686,15 @@ export class CrescaBucketProtocolService {
 
   /**
    * Open a leveraged position on a bucket.
+   *
+   * Pyth pull oracle: fetches fresh prices from Hermes immediately before
+   * submitting the transaction. The contract verifies publish_time is within
+   * 60 seconds — no keeper dependency.
+   *
    * @param bucketId    ID of your bucket
    * @param isLong      true = long, false = short
    * @param marginAlgo  margin to lock (in ALGO)
-   * @param assetIds    ASA IDs used when the bucket was created (drives price box refs)
+   * @param assetIds    ASA IDs in the same order as the bucket's assets array
    */
   async openPosition(
     bucketId: number,
@@ -645,23 +702,27 @@ export class CrescaBucketProtocolService {
     marginAlgo: number,
     assetIds: number[],
   ): Promise<{ txId: string; positionId: number }> {
+    // Fetch Pyth Hermes prices at call time (<150ms) — no keeper required
+    const { prices8dec, publishTime } = await fetchHermesPrices(assetIds);
+
     const owner = this.ownerBytes;
     const nextPositionId = await this.getTotalPositions();
-    const priceBoxes = assetIds.map((id) => ({
-      appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol,
-      name: this.key('prc_', this.u64(id)),
-    }));
     const appBoxes = [
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('bkt_', owner, this.u64(bucketId)) },
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('col_', owner) },
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('pos_', owner, this.u64(nextPositionId)) },
-      ...priceBoxes,
     ];
 
     const { txId, returnValue } = await callMethod(
       CONTRACT_APP_IDS.CrescaBucketProtocol,
       BUCKET_ABI_METHODS.open_position,
-      [bucketId, isLong, AlgorandService.algoToMicroAlgo(marginAlgo)],
+      [
+        bucketId,
+        isLong,
+        AlgorandService.algoToMicroAlgo(marginAlgo),
+        prices8dec,       // asset_prices[] — Hermes 8-decimal prices
+        publishTime,      // price_publish_time — Unix seconds from Hermes
+      ],
       undefined,
       [],
       appBoxes,
@@ -671,9 +732,13 @@ export class CrescaBucketProtocolService {
 
   /**
    * Close a position and realise P&L.
+   *
+   * Pyth pull oracle: fetches fresh prices from Hermes at call time.
+   * No keeper dependency.
+   *
    * @param positionId  ID of the position to close
-   * @param bucketId    ID of the bucket used when opening this position (needed for box refs)
-   * @param assetIds    ASA IDs used when the bucket was created (drives price box refs)
+   * @param bucketId    ID of the bucket used when opening (needed for box refs)
+   * @param assetIds    ASA IDs in the same order as the bucket's assets array
    * @returns P&L in ALGO (positive = profit, can be 0 on full loss)
    */
   async closePosition(
@@ -681,22 +746,24 @@ export class CrescaBucketProtocolService {
     bucketId: number,
     assetIds: number[],
   ): Promise<{ txId: string; pnlAlgo: string }> {
+    // Fetch Pyth Hermes prices at call time (<150ms) — no keeper required
+    const { prices8dec, publishTime } = await fetchHermesPrices(assetIds);
+
     const owner = this.ownerBytes;
-    const priceBoxes = assetIds.map((id) => ({
-      appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol,
-      name: this.key('prc_', this.u64(id)),
-    }));
     const appBoxes = [
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('pos_', owner, this.u64(positionId)) },
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('bkt_', owner, this.u64(bucketId)) },
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('col_', owner) },
-      ...priceBoxes,
     ];
 
     const { txId, returnValue } = await callMethod(
       CONTRACT_APP_IDS.CrescaBucketProtocol,
       BUCKET_ABI_METHODS.close_position,
-      [positionId],
+      [
+        positionId,
+        prices8dec,    // asset_prices[] — Hermes 8-decimal prices
+        publishTime,   // price_publish_time — Unix seconds from Hermes
+      ],
       undefined,
       [],
       appBoxes,
@@ -749,12 +816,39 @@ export class CrescaBucketProtocolService {
 
   /**
    * Liquidate an undercollateralised position (anyone can call).
+   *
+   * Pyth pull oracle: fetches fresh prices from Hermes at call time.
+   * The liquidation keeper calls this — no stale-oracle dependency.
+   *
+   * @param ownerAddress  wallet address of the position owner
+   * @param positionId    position to liquidate
+   * @param assetIds      ASA IDs in the same order as the bucket's assets array
    */
-  async liquidatePosition(ownerAddress: string, positionId: number): Promise<string> {
+  async liquidatePosition(
+    ownerAddress: string,
+    positionId: number,
+    assetIds: number[],
+  ): Promise<string> {
+    const { prices8dec, publishTime } = await fetchHermesPrices(assetIds);
+
+    const ownerBytes = algosdk.decodeAddress(ownerAddress).publicKey;
+    const appBoxes = [
+      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('pos_', ownerBytes, this.u64(positionId)) },
+      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('bkt_', ownerBytes, this.u64(positionId)) },
+    ];
+
     const { txId } = await callMethod(
       CONTRACT_APP_IDS.CrescaBucketProtocol,
       BUCKET_ABI_METHODS.liquidate_position,
-      [ownerAddress, positionId],
+      [
+        ownerAddress,
+        positionId,
+        prices8dec,   // asset_prices[] — Hermes 8-decimal prices
+        publishTime,  // price_publish_time — Unix seconds from Hermes
+      ],
+      undefined,
+      [],
+      appBoxes,
     );
     return txId;
   }
