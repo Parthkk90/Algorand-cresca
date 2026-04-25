@@ -1,9 +1,12 @@
 /**
  * Price Service - Fetches real-time crypto prices
  * Priority: Pyth Network (decentralized), CoinGecko (fallback), Binance (last resort)
+ *
+ * Also supports historical price data from the Cresca backend API.
  */
 
 import pythOracleService from './pythOracleService';
+import { backendFetch } from './backendConfig';
 
 interface PriceData {
   symbol: string;
@@ -13,6 +16,21 @@ interface PriceData {
   confidence?: number;
   isStale?: boolean;
 }
+
+interface PriceHistoryPoint {
+  price: number;
+  timestamp: string;
+}
+
+interface PriceHistoryResponse {
+  symbol: string;
+  period: string;
+  change: number;
+  priceCount: number;
+  prices: PriceHistoryPoint[];
+}
+
+type PriceHistoryPeriod = '1h' | '24h' | '7d' | '30d';
 
 interface BundlePrice {
   btc: PriceData;
@@ -237,6 +255,39 @@ class PriceService {
   }
 
   /**
+   * Fetch historical price data from the Cresca backend.
+   * Returns price points over the requested period for charting.
+   *
+   * Falls back to an empty result if the backend is unreachable.
+   */
+  async getPriceHistory(
+    symbol: string,
+    period: PriceHistoryPeriod = '24h',
+  ): Promise<PriceHistoryResponse> {
+    const emptyResult: PriceHistoryResponse = {
+      symbol: symbol.toUpperCase(),
+      period,
+      change: 0,
+      priceCount: 0,
+      prices: [],
+    };
+
+    const result = await backendFetch<PriceHistoryResponse>(
+      `/api/prices/history?symbol=${encodeURIComponent(symbol)}&period=${period}`,
+    );
+
+    if (result.ok && result.data) {
+      console.log(
+        `📈 Price history for ${symbol} (${period}): ${result.data.priceCount} points, ${result.data.change.toFixed(2)}% change`,
+      );
+      return result.data;
+    }
+
+    console.warn(`Failed to fetch price history for ${symbol}:`, result.error);
+    return emptyResult;
+  }
+
+  /**
    * Clear price cache
    */
   clearCache() {
@@ -245,4 +296,4 @@ class PriceService {
 }
 
 export const priceService = new PriceService();
-export type { PriceData, BundlePrice };
+export type { PriceData, BundlePrice, PriceHistoryPoint, PriceHistoryResponse, PriceHistoryPeriod };
