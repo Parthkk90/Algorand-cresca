@@ -1,12 +1,15 @@
 /**
  * Notification Service
  * ====================
- * Expo Go (SDK 53+) no longer supports Android remote push notifications.
+ * Push notification management for the Cresca wallet.
  *
- * To keep the app stable in Expo Go, this service is intentionally implemented
- * as a no-op stub. Calendar scheduling still works, but device notifications
- * are skipped until you move to a development build.
+ * Expo Go (SDK 53+) no longer supports Android remote push notifications.
+ * Local scheduling is a no-op in Expo Go, but this service now includes
+ * push token registration with the Cresca backend so the plumbing is
+ * ready when moving to a development build.
  */
+
+import { backendFetch } from './backendConfig';
 
 export interface ScheduleNotificationInput {
   scheduleId:      number;
@@ -15,8 +18,23 @@ export interface ScheduleNotificationInput {
   executeAt:       number;  // Unix timestamp (seconds)
 }
 
+/**
+ * Whether we're running in a full dev/production build (not Expo Go).
+ * Push notifications only work in dev builds.
+ */
+function isDevBuild(): boolean {
+  try {
+    // expo-constants is available in all Expo environments
+    const Constants = require('expo-constants').default;
+    return Constants.appOwnership !== 'expo'; // 'expo' = Expo Go
+  } catch {
+    return false;
+  }
+}
+
 class NotificationService {
   private warned = false;
+  private pushToken: string | null = null;
 
   private warnOnce(): void {
     if (this.warned) return;
@@ -30,8 +48,81 @@ class NotificationService {
    * Safe to call multiple times — does nothing if already granted.
    */
   async requestPermissions(): Promise<boolean> {
-    // Keep startup quiet in Expo Go; warn only when scheduling is attempted.
-    return false;
+    if (!isDevBuild()) {
+      // Keep startup quiet in Expo Go
+      return false;
+    }
+
+    try {
+      const Notifications = require('expo-notifications');
+      const { status: existing } = await Notifications.getPermissionsAsync();
+      let finalStatus = existing;
+
+      if (existing !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+
+      if (finalStatus !== 'granted') {
+        console.log('Push notification permission denied');
+        return false;
+      }
+
+      // Get the Expo push token
+      const tokenData = await Notifications.getExpoPushTokenAsync();
+      this.pushToken = tokenData.data;
+      console.log('📱 Push token obtained:', this.pushToken?.substring(0, 30) + '...');
+
+      return true;
+    } catch (err) {
+      console.warn('Failed to request push permissions:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Register the push token with the Cresca backend.
+   * Call after requestPermissions() succeeds and the wallet address is known.
+   *
+   * The backend stores the token mapping so the keeper bot can send
+   * notifications when schedules execute or positions get liquidated.
+   */
+  async registerPushToken(walletAddress: string): Promise<boolean> {
+    if (!this.pushToken) {
+      console.log('No push token available — skipping registration');
+      return false;
+    }
+
+    if (!walletAddress) {
+      console.warn('No wallet address provided — skipping push registration');
+      return false;
+    }
+
+    const platform = (() => {
+      try {
+        const { Platform } = require('react-native');
+        return Platform.OS ?? 'unknown';
+      } catch {
+        return 'unknown';
+      }
+    })();
+
+    const result = await backendFetch<{ success: boolean }>('/api/push/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        pushToken: this.pushToken,
+        walletAddress,
+        platform,
+      }),
+    });
+
+    if (result.ok) {
+      console.log('✅ Push token registered with backend');
+      return true;
+    } else {
+      console.warn('Failed to register push token:', result.error);
+      return false;
+    }
   }
 
   /**
@@ -42,9 +133,30 @@ class NotificationService {
    * If the executeAt time is already in the past (< 30s), fires immediately.
    */
   async schedulePaymentNotification(input: ScheduleNotificationInput): Promise<string> {
-    void input;
-    this.warnOnce();
-    return '';
+    if (!isDevBuild()) {
+      this.warnOnce();
+      return '';
+    }
+
+    try {
+      const Notifications = require('expo-notifications');
+      const now = Math.floor(Date.now() / 1000);
+      const delay = Math.max(1, input.executeAt - now);
+
+      const id = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: '💸 Payment Due',
+          body: `${input.amountAlgo.toFixed(6)} ALGO → ${input.recipient.slice(0, 8)}...`,
+          data: { scheduleId: input.scheduleId },
+        },
+        trigger: { seconds: delay },
+      });
+
+      return id;
+    } catch (err) {
+      console.warn('Failed to schedule notification:', err);
+      return '';
+    }
   }
 
   /**
@@ -52,7 +164,14 @@ class NotificationService {
    * Call when the user executes or cancels a schedule.
    */
   async cancelNotification(notificationId: string | undefined): Promise<void> {
-    void notificationId;
+    if (!notificationId || !isDevBuild()) return;
+
+    try {
+      const Notifications = require('expo-notifications');
+      await Notifications.cancelScheduledNotificationAsync(notificationId);
+    } catch (err) {
+      console.warn('Failed to cancel notification:', err);
+    }
   }
 
   /**
@@ -67,7 +186,21 @@ class NotificationService {
    * Cancel ALL pending payment notifications (e.g. on wallet reset).
    */
   async cancelAllNotifications(): Promise<void> {
-    return;
+    if (!isDevBuild()) return;
+
+    try {
+      const Notifications = require('expo-notifications');
+      await Notifications.cancelAllScheduledNotificationsAsync();
+    } catch (err) {
+      console.warn('Failed to cancel all notifications:', err);
+    }
+  }
+
+  /**
+   * Get the current push token (if obtained).
+   */
+  getPushToken(): string | null {
+    return this.pushToken;
   }
 }
 
