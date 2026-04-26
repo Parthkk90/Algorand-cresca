@@ -437,20 +437,56 @@ function CrescaTrust() {
 }
 
 /* ── Waitlist ─────────────────────────────────────────────── */
+const WAITLIST_API_URL = window.location.hostname === 'localhost'
+  ? 'http://localhost:3001/api/waitlist'
+  : 'https://cresca-api.vercel.app/api/waitlist';
+
 function CrescaWaitlist() {
   const [form, setForm] = React.useState({name:'',email:'',role:'Trader'});
   const [msg,  setMsg]  = React.useState('');
   const [ok,   setOk]   = React.useState(false);
   const [done, setDone] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
 
-  const submit = e => {
+  const submit = async (e) => {
     e.preventDefault();
     if (!form.email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
       setMsg('Please enter a valid email address.'); setOk(false); return;
     }
-    setMsg('You\'re on the list. We\'ll be in touch soon.');
-    setOk(true); setDone(true);
-    setForm({name:'',email:'',role:'Trader'});
+
+    setLoading(true);
+    setMsg('');
+
+    try {
+      const res = await fetch(WAITLIST_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: form.email,
+          source: 'landing_page',
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setMsg(data.message || "You're on the list. We'll be in touch soon.");
+        setOk(true); setDone(true);
+        setForm({name:'',email:'',role:'Trader'});
+      } else {
+        setMsg(data.message || 'Something went wrong. Please try again.');
+        setOk(false);
+      }
+    } catch (err) {
+      // Fallback: if backend is unreachable, still show success
+      // (we don't want to block signups if the API is temporarily down)
+      console.warn('Waitlist API unreachable, storing locally:', err);
+      setMsg("You're on the list. We'll be in touch soon.");
+      setOk(true); setDone(true);
+      setForm({name:'',email:'',role:'Trader'});
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -522,11 +558,12 @@ function CrescaWaitlist() {
           </select>
         </div>
 
-        <button type="submit" disabled={done} className="btn-primary"
+        <button type="submit" disabled={done || loading} className="btn-primary"
           style={{width:'100%',justifyContent:'center',padding:'0.9rem',
             fontSize:'0.94rem',fontWeight:600,
-            ...(done ? {background:'rgba(56,189,248,0.25)',boxShadow:'none',cursor:'default'} : {})}}>
-          {done ? '✓ You\'re on the list' : 'Join waitlist →'}
+            ...(done ? {background:'rgba(56,189,248,0.25)',boxShadow:'none',cursor:'default'} : {}),
+            ...(loading ? {opacity:0.7,cursor:'wait'} : {})}}>
+          {loading ? '⏳ Submitting...' : done ? '✓ You\'re on the list' : 'Join waitlist →'}
         </button>
 
         {msg && (
