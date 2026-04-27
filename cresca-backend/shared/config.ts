@@ -30,7 +30,6 @@ export const config = {
   // Oracle keeper only feeds the liquidation keeper's prc_ boxes.
   keeper: {
     calendarIntervalMs: parseInt(process.env.KEEPER_CALENDAR_INTERVAL_MS ?? '30000', 10),
-    oracleIntervalMs: parseInt(process.env.KEEPER_ORACLE_INTERVAL_MS ?? '60000', 10),    // was 20s
     liquidationIntervalMs: parseInt(process.env.KEEPER_LIQUIDATION_INTERVAL_MS ?? '60000', 10),
   },
 

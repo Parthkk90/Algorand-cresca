@@ -1,3 +1,30 @@
+const PYTH_FEED_IDS: Record<string, string> = {
+  'ALGO/USD': '0x08f781a893bc9340140c5f89c8a96f438bcfae4d1474cc0f688e3a52892c7318',
+  'USDC/USD': '0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a',
+};
+
+async function fetchHermesPrices(symbols: string[]): Promise<{
+  prices: Record<string, number>;
+  publishTime: number;
+}> {
+  const ids = symbols.map(s => PYTH_FEED_IDS[s]);
+  const url = `https://hermes.pyth.network/api/latest_price_feeds?ids[]=${ids.join('&ids[]=')}`;
+  const res = await fetch(url);
+  const data = await res.json() as Array<{
+    price: { price: string; expo: number; publish_time: string };
+  }>;
+
+  const prices: Record<string, number> = {};
+  let publishTime = 0;
+
+  for (let i = 0; i < symbols.length; i++) {
+    const feed = data[i];
+    prices[symbols[i]] = parseFloat(feed.price.price) * Math.pow(10, feed.price.expo);
+    publishTime = Math.max(publishTime, parseInt(feed.price.publish_time));
+  }
+
+  return { prices, publishTime };
+}
 /**
  * Liquidation Keeper
  * ==================
@@ -84,7 +111,7 @@ function decodePositionBox(
   }
 }
 
-async function liquidatePosition(position: DecodedPosition): Promise<string | null> {
+async function liquidatePosition(position: DecodedPosition, assetPrices: bigint[], publishTime: bigint): Promise<string | null> {
   const algod = getAlgod();
   const keeper = getKeeperAccount();
   const sp = await algod.getTransactionParams().do();
@@ -107,7 +134,7 @@ async function liquidatePosition(position: DecodedPosition): Promise<string | nu
   atc.addMethodCall({
     appID: APP_ID,
     method: ABIMethod.fromSignature(BUCKET_METHODS.liquidate_position),
-    methodArgs: [position.ownerAddress, position.positionId],
+    methodArgs: [position.ownerAddress, position.positionId, assetPrices, publishTime],
     sender: keeper.addr,
     signer: algosdk.makeBasicAccountTransactionSigner(keeper),
     suggestedParams: { ...sp, fee: 3000, flatFee: true },
@@ -182,7 +209,12 @@ export async function runLiquidationCycle(): Promise<void> {
       // Attempt liquidation — the contract itself checks if the position
       // is underwater. If it's healthy, the call will fail with an assertion
       // error, which we handle gracefully above.
-      const txId = await liquidatePosition(position);
+      const { prices, publishTime } = await fetchHermesPrices(['ALGO/USD', 'USDC/USD']);
+      const assetPrices = [
+        BigInt(Math.round(prices['ALGO/USD'] * 1e8)),
+        BigInt(Math.round(prices['USDC/USD'] * 1e8)),
+      ];
+      const txId = await liquidatePosition(position, assetPrices, BigInt(publishTime));
       if (txId) {
         liquidated++;
         logger.keeper('Position liquidated', txId, {

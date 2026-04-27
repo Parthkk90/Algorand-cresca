@@ -8,7 +8,6 @@
 import 'dotenv/config';
 import { checkKeeperBalance } from '../keeper/algorand.js';
 import { runCalendarCycle } from '../keeper/calendarKeeper.js';
-import { runOracleCycle } from '../keeper/oracleKeeper.js';
 import { runLiquidationCycle } from '../keeper/liquidationKeeper.js';
 import { logger } from '../shared/logger.js';
 
@@ -23,15 +22,11 @@ async function test() {
   logger.info(`   Balance: ${balance.toFixed(6)} ALGO`);
 
   logger.info('');
-  logger.info('2️⃣  Running oracle keeper cycle...');
-  await runOracleCycle();
-
-  logger.info('');
-  logger.info('3️⃣  Running calendar keeper cycle...');
+  logger.info('2️⃣  Running calendar keeper cycle...');
   await runCalendarCycle();
 
   logger.info('');
-  logger.info('4️⃣  Running liquidation keeper cycle...');
+  logger.info('3️⃣  Running liquidation keeper cycle...');
   await runLiquidationCycle();
 
   logger.info('');

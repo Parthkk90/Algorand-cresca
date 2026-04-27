@@ -1,11 +1,9 @@
 /**
  * Keeper — Main Entry Point
  * =========================
- * Starts all three keeper loops and a health HTTP endpoint:
+ * Starts two keeper loops and a health HTTP endpoint:
  *   1. Calendar keeper    — execute due scheduled payments (30s)
- *   2. Oracle keeper      — push Pyth prices to prc_ boxes for liquidation keeper (60s)
- *                           NOT required for user open/close — those fetch prices directly
- *   3. Liquidation keeper — liquidate underwater positions (60s)
+ *   2. Liquidation keeper — liquidate underwater positions (60s)
  */
 
 import http from 'http';
@@ -13,7 +11,6 @@ import { config } from '../shared/config.js';
 import { logger } from '../shared/logger.js';
 import { checkKeeperBalance } from './algorand.js';
 import { runCalendarCycle } from './calendarKeeper.js';
-import { runOracleCycle, getLastOraclePushTimestamp, isOracleFresh } from './oracleKeeper.js';
 import { runLiquidationCycle } from './liquidationKeeper.js';
 
 // ─── Health tracking ────────────────────────────────────────
@@ -22,10 +19,9 @@ let lastCalendarCycle = 0;
 let lastLiquidationCycle = 0;
 let startedAt = 0;
 
-function trackCycle(keeper: 'calendar' | 'oracle' | 'liquidation') {
+function trackCycle(keeper: 'calendar' | 'liquidation') {
   if (keeper === 'calendar') lastCalendarCycle = Date.now();
   if (keeper === 'liquidation') lastLiquidationCycle = Date.now();
-  // Oracle is tracked internally by oracleKeeper.ts
 }
 
 // ─── Wrapped cycle runners ──────────────────────────────────
@@ -46,10 +42,9 @@ function startHealthServer() {
     const maxMiss = 3; // Allow 3 missed cycles before unhealthy
 
     const calendarOk = now - lastCalendarCycle < config.keeper.calendarIntervalMs * maxMiss;
-    const oracleOk = isOracleFresh(config.keeper.oracleIntervalMs * maxMiss);
     const liquidationOk = now - lastLiquidationCycle < config.keeper.liquidationIntervalMs * maxMiss;
 
-    const healthy = calendarOk && oracleOk && liquidationOk;
+    const healthy = calendarOk && liquidationOk;
 
     res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -57,7 +52,6 @@ function startHealthServer() {
       uptime: Math.floor((now - startedAt) / 1000),
       keepers: {
         calendar: { ok: calendarOk, lastCycle: lastCalendarCycle },
-        oracle: { ok: oracleOk, lastCycle: getLastOraclePushTimestamp() },
         liquidation: { ok: liquidationOk, lastCycle: lastLiquidationCycle },
       },
     }));
@@ -77,7 +71,6 @@ async function main() {
   logger.info('  🤖 Cresca Keeper Bot');
   logger.info(`  Network: ${config.algo.network}`);
   logger.info(`  Calendar interval: ${config.keeper.calendarIntervalMs / 1000}s`);
-  logger.info(`  Oracle interval: ${config.keeper.oracleIntervalMs / 1000}s`);
   logger.info(`  Liquidation interval: ${config.keeper.liquidationIntervalMs / 1000}s`);
   logger.info('═══════════════════════════════════════════════');
 
@@ -89,9 +82,6 @@ async function main() {
 
   // Run initial cycles immediately
   logger.info('Running initial cycles...');
-
-  await safeRun('Oracle', runOracleCycle);
-  trackCycle('oracle');
 
   await safeRun('Calendar', runCalendarCycle);
   trackCycle('calendar');
@@ -106,11 +96,6 @@ async function main() {
     await safeRun('Calendar', runCalendarCycle);
     trackCycle('calendar');
   }, config.keeper.calendarIntervalMs);
-
-  setInterval(async () => {
-    await safeRun('Oracle', runOracleCycle);
-    trackCycle('oracle');
-  }, config.keeper.oracleIntervalMs);
 
   setInterval(async () => {
     await safeRun('Liquidation', runLiquidationCycle);
