@@ -7,18 +7,8 @@
  * NOTE: You can also run this SQL directly in the Supabase SQL Editor.
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { query } from '../shared/postgres';
 import 'dotenv/config';
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-
-if (!supabaseUrl || !supabaseKey) {
-  console.error('❌ SUPABASE_URL and SUPABASE_SERVICE_KEY must be set');
-  process.exit(1);
-}
-
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 const SCHEMA_SQL = `
 -- =====================================================
@@ -72,27 +62,48 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_symbol_ts
 
 async function seed() {
   console.log('🗄️  Creating database tables...');
-  console.log('');
-  console.log('ℹ️  Copy the SQL below into Supabase SQL Editor:');
-  console.log('   Dashboard → SQL Editor → New Query → Paste → Run');
-  console.log('');
-  console.log('─'.repeat(60));
-  console.log(SCHEMA_SQL);
-  console.log('─'.repeat(60));
-  console.log('');
-
-  // Verify connection by attempting a simple query
   try {
-    const { error } = await supabase.from('waitlist').select('id').limit(1);
-    if (error && error.code === '42P01') {
-      console.log('⚠️  Tables do not exist yet. Run the SQL above in Supabase SQL Editor.');
-    } else if (error) {
-      console.log(`⚠️  Supabase responded with: ${error.message}`);
-    } else {
-      console.log('✅ Supabase connection verified — tables exist!');
-    }
+    await query(`
+      CREATE TABLE IF NOT EXISTS waitlist (
+        id SERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        source TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS push_tokens (
+        wallet_address TEXT PRIMARY KEY,
+        push_token TEXT NOT NULL,
+        platform TEXT,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS price_snapshots (
+        id SERIAL PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        price NUMERIC NOT NULL,
+        timestamp BIGINT NOT NULL
+      );
+    `);
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_price_snapshots_symbol_timestamp 
+        ON price_snapshots(symbol, timestamp);
+    `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS keeper_logs (
+        id SERIAL PRIMARY KEY,
+        keeper TEXT NOT NULL,
+        cycle_count INT,
+        error_count INT,
+        timestamp TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    console.log('✅ Tables created or already exist!');
   } catch (err) {
-    console.log('⚠️  Could not connect to Supabase. Check your URL and key.');
+    console.error('❌ Error creating tables:', err);
+    process.exit(1);
   }
 }
 
