@@ -18,9 +18,10 @@
 import { dartRouterService } from './dartRouterService';
 import { crescaBucketService } from './algorandContractServices';
 import { algorandService } from './algorandService';
+import { REAL_ASA_IDS, ORACLE_MAX_AGE_SECONDS } from '../constants/config';
 
-// Default tracked ASAs — ALGO (0) and USDCa (10458941) have confirmed testnet liquidity
-export const DEFAULT_TRACKED_ASSET_IDS = [0, 10458941];
+// Default tracked ASAs — sourced from central config, not hardcoded
+export const DEFAULT_TRACKED_ASSET_IDS = [REAL_ASA_IDS.ALGO, REAL_ASA_IDS.USDC];
 
 // ---------------------------------------------------------------------------
 // OracleKeeperService
@@ -83,7 +84,7 @@ class OracleKeeperService {
    * Returns true if the oracle was updated within the last `maxAgeSeconds`.
    * Mirrors the 30-second check enforced by the contract.
    */
-  isOracleFresh(maxAgeSeconds: number = 30): boolean {
+  isOracleFresh(maxAgeSeconds: number = ORACLE_MAX_AGE_SECONDS): boolean {
     if (this.lastTimestamp === null) return false;
     const ageSeconds = (Date.now() / 1000) - this.lastTimestamp;
     return ageSeconds <= maxAgeSeconds;

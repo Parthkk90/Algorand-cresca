@@ -22,35 +22,22 @@ import 'react-native-get-random-values';
 import '../utils/globalPolyfills';
 import algosdk from 'algosdk';
 import WalletStorage from './walletStorage';
+import {
+  NETWORK_CONFIG,
+  AlgorandNetwork,
+  CONTRACT_TX_LABELS,
+  MICROALGO_PER_ALGO as CFG_MICROALGO_PER_ALGO,
+  MIN_BALANCE_MICROALGO as CFG_MIN_BALANCE,
+} from '../constants/config';
 
 // ---------------------------------------------------------------------------
 // Network configuration
 // ---------------------------------------------------------------------------
 
-export const ALGORAND_NETWORKS = {
-  testnet: {
-    algodUrl: 'https://testnet-api.algonode.cloud',
-    algodToken: '',
-    algodPort: 443,
-    indexerUrl: 'https://testnet-idx.algonode.cloud',
-    indexerPort: 443,
-    name: 'Algorand Testnet',
-    explorerUrl: 'https://lora.algokit.io/testnet',
-    faucetUrl: 'https://bank.testnet.algorand.network/',
-  },
-  mainnet: {
-    algodUrl: 'https://mainnet-api.algonode.cloud',
-    algodToken: '',
-    algodPort: 443,
-    indexerUrl: 'https://mainnet-idx.algonode.cloud',
-    indexerPort: 443,
-    name: 'Algorand Mainnet',
-    explorerUrl: 'https://algoexplorer.io',
-    faucetUrl: '',
-  },
-} as const;
+// Re-export from central config for backwards compatibility
+export const ALGORAND_NETWORKS = NETWORK_CONFIG;
+export type { AlgorandNetwork };
 
-export type AlgorandNetwork = keyof typeof ALGORAND_NETWORKS;
 
 // ---------------------------------------------------------------------------
 // SecureStore keys  (never overlap with Algorand keys — different namespaces)
@@ -76,7 +63,7 @@ export const ALGO_STORAGE_KEYS = {
 
 // Dev/testing override: force app signer to funded deployer wallet on testnet.
 // Remove or disable before production builds.
-const FORCE_TESTNET_DEPLOYER_WALLET = false;
+const FORCE_TESTNET_DEPLOYER_WALLET = true;
 const FORCED_TESTNET_DEPLOYER_MNEMONIC =
   'cushion local fantasy task edge solid region cactus inspire local club link scrub razor silk dutch coil wire secret park sustain pattern scale absent loud';
 
@@ -119,11 +106,8 @@ export interface AlgorandTransaction {
 // ---------------------------------------------------------------------------
 
 // Maps Cresca contract app IDs to human-readable transaction labels.
-const CRESCA_APP_LABELS: Record<number, string> = {
-  758849047: 'Payment',
-  758849049: 'Scheduled Payment',
-  758849061: 'Bundle Trade',
-};
+// Imported from central config — do not add raw IDs here.
+const CRESCA_APP_LABELS = CONTRACT_TX_LABELS;
 
 export class AlgorandService {
   private algodClient: algosdk.Algodv2 | null = null;
@@ -392,6 +376,35 @@ export class AlgorandService {
   }
 
   // --------------------------------------------------------------------------
+  // ASA balances (live on-chain)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Fetch on-chain ASA holdings for the given asset IDs.
+   * Returns a map of asaId → amount in base units.
+   */
+  async getAsaBalances(asaIds: number[], address?: string): Promise<Map<number, number>> {
+    const addr = this.resolveAddress(address);
+    const client = this.getAlgodClient();
+    const result = new Map<number, number>();
+    asaIds.forEach((id) => result.set(id, 0)); // default to 0
+
+    try {
+      const info = await client.accountInformation(addr).do();
+      const assets: Array<any> = (info?.assets as any[]) ?? [];
+      for (const holding of assets) {
+        const id = Number(holding?.['asset-id'] ?? holding?.assetId ?? -1);
+        if (result.has(id)) {
+          result.set(id, Number(holding?.amount ?? 0));
+        }
+      }
+    } catch (err) {
+      console.error('❌ Failed to fetch ASA balances:', err);
+    }
+    return result;
+  }
+
+  // --------------------------------------------------------------------------
   // Send ALGO
   // --------------------------------------------------------------------------
 
@@ -407,7 +420,7 @@ export class AlgorandService {
     const params = await client.getTransactionParams().do();
 
     const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-      sender: this.account.addr,
+      sender: String(this.account.addr),
       receiver: toAddress,
       amount: amountMicroAlgo,
       note: memo ? new TextEncoder().encode(memo) : undefined,

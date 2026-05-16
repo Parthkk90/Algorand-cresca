@@ -14,6 +14,13 @@
 
 import algosdk, { ABIMethod, AtomicTransactionComposer } from 'algosdk';
 import { ASA_ID_TO_PYTH_SYMBOL } from '../constants/baskets';
+import {
+  CONTRACT_APP_IDS,
+  REAL_ASA_IDS,
+  ORACLE_SCALE,
+  DEFAULT_SLIPPAGE_PCT,
+  DART_POOL_FEE_BPS,
+} from '../constants/config';
 import { algorandService } from './algorandService';
 import { pythOracleService } from './pythOracleService';
 
@@ -21,16 +28,27 @@ import { pythOracleService } from './pythOracleService';
 // Config
 // ---------------------------------------------------------------------------
 
-// Testnet ASA IDs supported by the current swap UI
+// Supported assets — ASA IDs come from central config
 export const TESTNET_ASSETS: Record<string, { asaId: number; decimals: number; name: string }> = {
-  ALGO: { asaId: 0,        decimals: 6, name: 'Algorand'  },
-  USDC: { asaId: 10458941, decimals: 6, name: 'USD Coin'  },
-  TST:  { asaId: 758849338, decimals: 6, name: 'Cresca Test Asset' },
+  ALGO: { asaId: REAL_ASA_IDS.ALGO, decimals: 6, name: 'Algorand'  },
+  USDC: { asaId: REAL_ASA_IDS.USDC, decimals: 6, name: 'USD Coin'  },
+  TST:  { asaId: REAL_ASA_IDS.TST,  decimals: 6, name: 'Cresca Test Asset' },
 };
 
-const DART_SWAP_APP_ID = 758849063;
+const DART_SWAP_APP_ID = CONTRACT_APP_IDS.CrescaDartSwap;
+
+/**
+ * LIVE_POOL_ASA_IDS — assets with a funded on-chain AMM pool.
+ * Swap quotes for these come from the contract's constant-product formula.
+ * Everything else uses Pyth oracle price estimation only.
+ *
+ * To add a new asset:
+ *   1. Run: python3 setup_pools.py  (opt-in + configure_pool + fund)
+ *   2. Add its ASA ID here.
+ */
 const LIVE_POOL_ASA_IDS = new Set<number>([
-  TESTNET_ASSETS.TST.asaId,
+  REAL_ASA_IDS.TST,   // ALGO ↔ TST pool: 11.75 ALGO / 50.29 TST — active on testnet
+  REAL_ASA_IDS.USDC,  // ALGO ↔ USDC pool: 5 ALGO / 20 USDC — active on testnet ✅
 ]);
 
 const DART_METHODS = {
@@ -38,6 +56,9 @@ const DART_METHODS = {
   swap_exact_algo_for_asset: 'swap_exact_algo_for_asset(pay,uint64,uint64,address)uint64',
   swap_exact_asset_for_algo: 'swap_exact_asset_for_algo(axfer,uint64,uint64,address)uint64',
 } as const;
+
+/** Fee rate exported so adapters can stay in sync */
+export { DART_POOL_FEE_BPS };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -88,10 +109,28 @@ class DartRouterService {
   // ASA_ID_TO_PYTH_SYMBOL is the authoritative mapping (from constants/baskets).
   // Keeping a local reference here so internal methods can use it without re-importing.
 
-  private isLivePair(fromASAID: number, toASAID: number): boolean {
+  /** True when both sides of the pair have a funded on-chain AMM pool. */
+  isLivePair(fromASAID: number, toASAID: number): boolean {
     const algo = TESTNET_ASSETS.ALGO.asaId;
     const candidate = fromASAID === algo ? toASAID : (toASAID === algo ? fromASAID : -1);
     return candidate !== -1 && LIVE_POOL_ASA_IDS.has(candidate);
+  }
+
+  /**
+   * Return the direct AMM ratio: how many toAsset units per 1 fromAsset unit.
+   * Uses simulate — no transaction submitted.
+   * Falls back to null if the pair is not a live pool.
+   */
+  async getPoolRate(fromASAID: number, toASAID: number): Promise<number | null> {
+    if (!this.isLivePair(fromASAID, toASAID)) return null;
+    try {
+      const oneUnit = 1_000_000; // 1.000000 in 6-decimal base units
+      const q = await this.fetchLiveQuote(fromASAID, toASAID, oneUnit);
+      // q.quote is out-units for 1 in-unit → rate in human decimals
+      return q.quote / 1_000_000;
+    } catch {
+      return null;
+    }
   }
 
   private poolBoxName(assetId: number): Uint8Array {
@@ -118,8 +157,8 @@ class DartRouterService {
 
     const sp = await client.getTransactionParams().do();
     const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      sender: acct.addr,
-      receiver: acct.addr,
+      sender: String(acct.addr),
+      receiver: String(acct.addr),
       amount: 0,
       assetIndex: assetId,
       suggestedParams: sp,
@@ -142,18 +181,20 @@ class DartRouterService {
 
     const atc = new AtomicTransactionComposer();
     const sp = await client.getTransactionParams().do();
+    const addrStr = String(account.addr);
     atc.addMethodCall({
       appID: DART_SWAP_APP_ID,
       method: ABIMethod.fromSignature(DART_METHODS.get_quote_exact_in),
       methodArgs: [assetId, isAlgoIn, amount],
-      sender: account.addr,
+      sender: addrStr,
       signer: algosdk.makeBasicAccountTransactionSigner(account),
       suggestedParams: { ...sp, fee: 1000, flatFee: true },
       boxes: [{ appIndex: DART_SWAP_APP_ID, name: this.poolBoxName(assetId) }],
       appForeignAssets: [assetId],
     });
 
-    const res = await atc.execute(client, 4);
+    // Use simulate() — free, instant, no real txn broadcast
+    const res = await atc.simulate(client);
     const out = Number(res.methodResults?.[0]?.returnValue ?? 0);
 
     const fromDecimals = this.getDecimals(fromASAID);
@@ -280,7 +321,7 @@ class DartRouterService {
    */
   async executeSwap(
     quote: SwapQuote,
-    slippagePct: number = 0.5,
+    slippagePct: number = DEFAULT_SLIPPAGE_PCT,
   ): Promise<{ txId: string; amountOut: number }> {
     const fromASAID = quote.fromASAID;
     const toASAID = quote.toASAID;
@@ -296,20 +337,23 @@ class DartRouterService {
 
     const client = algorandService.getAlgodClient();
     const account = algorandService.getAccount();
+    const addr = String(account.addr);  // always a plain string — algosdk v2.7
+    const signer = algosdk.makeBasicAccountTransactionSigner(account);
     const assetId = fromASAID === TESTNET_ASSETS.ALGO.asaId ? toASAID : fromASAID;
     const minOut = Math.max(1, Math.floor(quote.quote * (1 - slippagePct / 100)));
 
     // Ensure recipient can receive ASA when swapping ALGO -> ASA.
     if (toASAID !== TESTNET_ASSETS.ALGO.asaId) {
-      await this.ensureAssetOptIn(toASAID);
+      await this.ensureAssetOptIn(toASAID, addr);
     }
 
     const sp = await client.getTransactionParams().do();
     const atc = new AtomicTransactionComposer();
 
     if (fromASAID === TESTNET_ASSETS.ALGO.asaId) {
+      // ALGO → ASA: pay txn + swap_exact_algo_for_asset
       const pay = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-        sender: account.addr,
+        sender: addr,
         receiver: algosdk.getApplicationAddress(DART_SWAP_APP_ID),
         amount: amountIn,
         suggestedParams: { ...sp, fee: 1000, flatFee: true },
@@ -319,22 +363,23 @@ class DartRouterService {
         appID: DART_SWAP_APP_ID,
         method: ABIMethod.fromSignature(DART_METHODS.swap_exact_algo_for_asset),
         methodArgs: [
-          { txn: pay, signer: algosdk.makeBasicAccountTransactionSigner(account) } as any,
+          { txn: pay, signer } as any,
           assetId,
           minOut,
-          String(account.addr),
+          addr,
         ],
-        sender: account.addr,
-        signer: algosdk.makeBasicAccountTransactionSigner(account),
+        sender: addr,
+        signer,
         suggestedParams: { ...sp, fee: 3000, flatFee: true },
         boxes: [{ appIndex: DART_SWAP_APP_ID, name: this.poolBoxName(assetId) }],
         appForeignAssets: [assetId],
       });
     } else {
+      // ASA → ALGO: axfer txn + swap_exact_asset_for_algo
       const axfer = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-        sender: account.addr,
-        receiver: algosdk.getApplicationAddress(DART_SWAP_APP_ID),
-        amount: amountIn,
+        sender:     addr,
+        receiver:   algosdk.getApplicationAddress(DART_SWAP_APP_ID),
+        amount:     amountIn,
         assetIndex: assetId,
         suggestedParams: { ...sp, fee: 1000, flatFee: true },
       });
@@ -343,13 +388,13 @@ class DartRouterService {
         appID: DART_SWAP_APP_ID,
         method: ABIMethod.fromSignature(DART_METHODS.swap_exact_asset_for_algo),
         methodArgs: [
-          { txn: axfer, signer: algosdk.makeBasicAccountTransactionSigner(account) } as any,
+          { txn: axfer, signer } as any,
           assetId,
           minOut,
-          String(account.addr),
+          addr,
         ],
-        sender: account.addr,
-        signer: algosdk.makeBasicAccountTransactionSigner(account),
+        sender: addr,
+        signer,
         suggestedParams: { ...sp, fee: 3000, flatFee: true },
         boxes: [{ appIndex: DART_SWAP_APP_ID, name: this.poolBoxName(assetId) }],
         appForeignAssets: [assetId],
@@ -372,7 +417,7 @@ class DartRouterService {
    * @returns integer in 8-decimal format (1 ALGO = 100_000_000)
    */
   async getAssetOraclePrice(assetId: number): Promise<number> {
-    if (assetId === 0) return 100_000_000;
+    if (assetId === 0) return ORACLE_SCALE;
 
     const symbol = ASA_ID_TO_PYTH_SYMBOL[assetId];
     if (!symbol) {
@@ -392,7 +437,7 @@ class DartRouterService {
       console.warn(`⚠️ Pyth price is stale for ${symbol} or ALGO — using anyway`);
     }
 
-    return Math.round((assetPrice.price / algoPrice.price) * 100_000_000);
+    return Math.round((assetPrice.price / algoPrice.price) * ORACLE_SCALE);
   }
 
   /**
@@ -412,7 +457,7 @@ class DartRouterService {
         } catch (err: any) {
           console.warn(`⚠️ Pyth oracle price failed for ASA ${asaId}:`, err?.message);
           // ALGO is always 1:1; everything else falls back to 1 ALGO as a safe default
-          results.set(asaId, 100_000_000);
+          results.set(asaId, ORACLE_SCALE);
         }
       }),
     );

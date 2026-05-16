@@ -20,6 +20,15 @@ import algosdk, {
 } from 'algosdk';
 import { algorandService, AlgorandService, MICROALGO_PER_ALGO } from './algorandService';
 import { pythOracleService, PYTH_PRICE_FEEDS } from './pythOracleService';
+import {
+  CONTRACT_APP_IDS,
+  REAL_ASA_IDS,
+  ORACLE_SCALE,
+  MAX_BATCH_RECIPIENTS,
+} from '../constants/config';
+
+// Re-export so other services can import CONTRACT_APP_IDS from here (backwards compat)
+export { CONTRACT_APP_IDS };
 
 /**
  * ASA ID → Pyth symbol mapping.
@@ -27,8 +36,8 @@ import { pythOracleService, PYTH_PRICE_FEEDS } from './pythOracleService';
  * 0 = native ALGO (uses CoinGecko fallback via pythOracleService).
  */
 const ASA_ID_TO_SYMBOL: Record<number, string> = {
-  0: 'ALGO',
-  10458941: 'USDC',
+  [REAL_ASA_IDS.ALGO]: 'ALGO',
+  [REAL_ASA_IDS.USDC]: 'USDC',
   100: 'BTC',
   101: 'ETH',
   102: 'SOL',
@@ -71,15 +80,8 @@ async function fetchHermesPrices(assetIds: number[]): Promise<{
   return { prices8dec, publishTime };
 }
 
-// ---------------------------------------------------------------------------
-// Deployed App IDs — update after running deploy.py on testnet
-// ---------------------------------------------------------------------------
-
-export const CONTRACT_APP_IDS = {
-  CrescaPayments: 758849047,
-  CrescaCalendarPayments: 758849049,
-  CrescaBucketProtocol: 758849061,
-} as const;
+// CONTRACT_APP_IDS is imported from constants/config and re-exported above.
+// Do not redeclare it here.
 
 // ---------------------------------------------------------------------------
 // Minimal ABI descriptors (subset of the full ARC-32 spec)
@@ -277,8 +279,8 @@ export class CrescaPaymentsService {
     if (recipients.length !== amountsAlgo.length) {
       throw new Error('recipients and amounts must have the same length');
     }
-    if (recipients.length > 8) {
-      throw new Error('Max 8 recipients per batch (AVM inner-txn limit)');
+    if (recipients.length > MAX_BATCH_RECIPIENTS) {
+      throw new Error(`Max ${MAX_BATCH_RECIPIENTS} recipients per batch (AVM inner-txn limit)`);
     }
 
     const amountsMicro = amountsAlgo.map(AlgorandService.algoToMicroAlgo);
