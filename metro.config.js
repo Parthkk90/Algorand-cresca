@@ -15,4 +15,7 @@ config.resolver.fallback = {
   buffer: require.resolve('buffer'),
 };
 
+// Fix @noble/hashes "not listed in exports" warning
+config.resolver.unstable_enablePackageExports = true;
+
 module.exports = config;
