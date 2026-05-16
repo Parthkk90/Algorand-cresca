@@ -27,6 +27,7 @@ import {
 import { LineChart } from "react-native-wagmi-charts";
 import { ScreenContainer } from "../components/ScreenContainer";
 import { TxSkeletonRow } from "../components/SkeletonRow";
+import { REAL_ASA_IDS } from "../constants/config";
 import {
   AssetChip,
   CrescaInput,
@@ -116,11 +117,11 @@ const MARKET_META: Record<
 const MARKET_IDS = Object.keys(MARKET_META);
 
 const ID_TO_ASA: Record<string, number> = {
-  algorand: 0,
+  algorand: REAL_ASA_IDS.ALGO,
   ethereum: 101,
   bitcoin: 100,
   solana: 102,
-  "usd-coin": 10458941,
+  "usd-coin": REAL_ASA_IDS.USDC,
 };
 
 function formatPrice(value: number): string {

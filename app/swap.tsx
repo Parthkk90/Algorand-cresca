@@ -13,10 +13,17 @@ import {
 } from "react-native";
 import { ScreenContainer } from "../components/ScreenContainer";
 import { SYNTHETIC_ASA_IDS } from "../constants/baskets";
+import {
+  CONTRACT_APP_IDS,
+  REAL_ASA_IDS,
+  DEFAULT_SLIPPAGE_PCT,
+  CONFIRM_RESET_DELAY_MS,
+  explorerTxUrl,
+} from "../constants/config";
 import { algorandService } from "../services/algorandService";
 import { dartRouterService, SwapQuote } from "../services/dartRouterService";
 import { pythOracleService } from "../services/pythOracleService";
-import { StoredSwapAsset, swapPortfolioStore } from "../services/swapPortfolioStore";
+import { swapPortfolioStore } from "../services/swapPortfolioStore";
 import {
   AssetChip,
   CrescaSheet,
@@ -27,7 +34,7 @@ import {
 } from "../src/components/ui";
 import { C, H_PAD, R, T } from "../src/theme";
 
-const DART_APP_ID = 758849063;
+const DART_APP_ID = CONTRACT_APP_IDS.CrescaDartSwap;
 
 type SwapState =
   | "idle"
@@ -58,14 +65,14 @@ const TOKENS: Token[] = [
     symbol: "TST",
     name: "Cresca Test Asset",
     networkColor: C.brand.teal,
-    asaId: 758849338,
+    asaId: REAL_ASA_IDS.TST,
     decimals: 6,
   },
   {
     symbol: "USDC",
     name: "USD Coin",
     networkColor: C.networks.ethereum,
-    asaId: SYNTHETIC_ASA_IDS.USDC,
+    asaId: REAL_ASA_IDS.USDC,   // real ASA 10458941 — live AMM pool active ✅
     decimals: 6,
   },
   {
@@ -187,10 +194,11 @@ export default function SwapScreen() {
 
   const [walletAddress, setWalletAddress] = useState("");
   const [algoBalance, setAlgoBalance] = useState(0);
-  const [portfolioAssets, setPortfolioAssets] = useState<StoredSwapAsset[]>([]);
+  const [asaBalances, setAsaBalances] = useState<Map<number, number>>(new Map());
 
-  const [fromToken, setFromToken] = useState<Token>(TOKEN_BY_SYMBOL.ETH);
+  const [fromToken, setFromToken] = useState<Token>(TOKEN_BY_SYMBOL.ALGO);
   const [toToken, setToToken] = useState<Token>(TOKEN_BY_SYMBOL.USDC);
+
 
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
@@ -201,9 +209,11 @@ export default function SwapScreen() {
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [lastTxId, setLastTxId] = useState<string | null>(null);
 
-  const [slippagePct, setSlippagePct] = useState(0.5);
+  const [slippagePct, setSlippagePct] = useState(DEFAULT_SLIPPAGE_PCT);
   const [customSlippage, setCustomSlippage] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [isLivePair, setIsLivePair] = useState(true); // ALGO/USDC default is live
+
 
   const [tokenSheetTarget, setTokenSheetTarget] = useState<"from" | "to">("from");
   const [tokenSearch, setTokenSearch] = useState("");
@@ -243,8 +253,11 @@ export default function SwapScreen() {
   }, [params.from, params.to]);
 
   useEffect(() => {
+    const live = dartRouterService.isLivePair(fromToken.asaId, toToken.asaId);
+    setIsLivePair(live);
     void loadPairRate();
   }, [fromToken.symbol, toToken.symbol]);
+
 
   useEffect(() => {
     if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
@@ -273,33 +286,33 @@ export default function SwapScreen() {
       const wallet = await algorandService.initializeWallet();
       setWalletAddress(wallet.address);
 
-      const [{ algo }, stored] = await Promise.all([
+      const [{ algo }, asaMap] = await Promise.all([
         algorandService.getBalance(),
-        swapPortfolioStore.getAll(wallet.address),
+        algorandService.getAsaBalances([REAL_ASA_IDS.USDC, REAL_ASA_IDS.TST]),
       ]);
 
       setAlgoBalance(Number(algo));
-      setPortfolioAssets(stored);
+      setAsaBalances(asaMap);
     } catch (error: any) {
-      setExecutionError(error?.message ?? "Failed to initialize wallet");
+      setExecutionError(error?.message ?? 'Failed to initialize wallet');
     } finally {
       setIsBootstrapping(false);
     }
   };
 
   const refreshWalletSnapshots = async () => {
-    if (!walletAddress) return;
-    const [{ algo }, stored] = await Promise.all([
+    const [{ algo }, asaMap] = await Promise.all([
       algorandService.getBalance(),
-      swapPortfolioStore.getAll(walletAddress),
+      algorandService.getAsaBalances([REAL_ASA_IDS.USDC, REAL_ASA_IDS.TST]),
     ]);
     setAlgoBalance(Number(algo));
-    setPortfolioAssets(stored);
+    setAsaBalances(asaMap);
   };
 
   const getTokenBalance = (token: Token): number => {
     if (token.asaId === 0) return algoBalance;
-    return portfolioAssets.find((asset) => asset.symbol === token.symbol)?.amount ?? 0;
+    const baseUnits = asaBalances.get(token.asaId) ?? 0;
+    return baseUnits / Math.pow(10, token.decimals);
   };
 
   const loadPairRate = async () => {
@@ -310,6 +323,15 @@ export default function SwapScreen() {
         return;
       }
 
+      // Live AMM pair: use actual pool ratio (simulate, no tx broadcast)
+      const live = dartRouterService.isLivePair(fromToken.asaId, toToken.asaId);
+      if (live) {
+        const rate = await dartRouterService.getPoolRate(fromToken.asaId, toToken.asaId);
+        setPythRate(rate);
+        return;
+      }
+
+      // Oracle-estimated pair: use Pyth prices
       const [fromPrice, toPrice] = await Promise.all([
         fromToken.symbol === "USDC"
           ? Promise.resolve({ price: 1 })
@@ -464,23 +486,7 @@ export default function SwapScreen() {
         setSwapState("broadcasting");
         const executed = await dartRouterService.executeSwap(activeQuote, slippagePct);
         setLastTxId(executed.txId);
-
-        if (walletAddress) {
-          await swapPortfolioStore.applySwap(
-            walletAddress,
-            {
-              symbol: fromToken.symbol,
-              asaId: fromToken.asaId,
-              amount: amountNumber,
-            },
-            {
-              symbol: toToken.symbol,
-              asaId: toToken.asaId,
-              amount: fromBaseUnits(executed.amountOut, toToken.decimals),
-            },
-          );
-        }
-
+        // Balances refreshed from chain below — no need to write portfolio store
         await refreshWalletSnapshots();
       }
 
@@ -491,7 +497,7 @@ export default function SwapScreen() {
       setSwapState("confirmed");
 
       if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
-      confirmTimerRef.current = setTimeout(() => setSwapState("idle"), 2000);
+      confirmTimerRef.current = setTimeout(() => setSwapState("idle"), CONFIRM_RESET_DELAY_MS);
     } catch (error: any) {
       setExecutionError(error?.message ?? "Swap failed. Please retry.");
       setSwapState("failed");
@@ -540,7 +546,8 @@ export default function SwapScreen() {
 
   const routeLabel = quote ? dartRouterService.formatRoute(quote) : "--";
   const fromUsdValue = Number(fromAmount || 0) * (pythRate ?? 0);
-  const toUsdValue = Number(toAmount || 0);
+  // For live pairs, use exact AMM usdOut from quote; otherwise use toAmount * rate
+  const toUsdValue = quote?.usdOut ?? (Number(toAmount || 0) * (pythRate ? 1 / pythRate : 0));
 
   const filteredTokens = useMemo(() => {
     const query = tokenSearch.trim().toLowerCase();
@@ -571,8 +578,14 @@ export default function SwapScreen() {
 
       <View style={styles.body}>
         <View style={styles.banner}>
-          <Text style={styles.bannerTitle}>⚡ DART Route Active</Text>
-          <Text style={styles.bannerText}>Best price path found on Algorand</Text>
+          <Text style={styles.bannerTitle}>
+            {isLivePair ? "🔵 Live AMM Pool" : "📡 Oracle Estimate"}
+          </Text>
+          <Text style={styles.bannerText}>
+            {isLivePair
+              ? "Real on-chain DART pool · 0.3% fee"
+              : "Pyth oracle price · execution unavailable for this pair"}
+          </Text>
         </View>
 
         <View style={styles.slotCard}>

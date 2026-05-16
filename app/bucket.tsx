@@ -14,6 +14,10 @@ import {
 } from "react-native";
 import { ScreenContainer } from "../components/ScreenContainer";
 import { BASKETS } from "../constants/baskets";
+import {
+  DEFAULT_LEVERAGE as CFG_DEFAULT_LEVERAGE,
+  explorerTxUrl,
+} from "../constants/config";
 import { CONTRACT_APP_IDS, crescaBucketService } from "../services/algorandContractServices";
 import { algorandService } from "../services/algorandService";
 import { dartRouterService } from "../services/dartRouterService";
@@ -48,7 +52,7 @@ type PendingAction = "deposit" | "withdraw" | "create" | "close" | null;
 
 const DEPOSIT_ASSET_OPTIONS = ["ALGO", "USDC", "ETH"] as const;
 const WITHDRAW_OPTIONS = [25, 50, 75, 100] as const;
-const DEFAULT_LEVERAGE = 10;
+const DEFAULT_LEVERAGE = CFG_DEFAULT_LEVERAGE;
 
 const ALL_ASSETS = Array.from(
   BASKETS.flatMap((basket) => basket.assets.map((asset) => [asset.symbol, asset.asaId])).reduce(
@@ -946,7 +950,7 @@ export default function BucketsScreen() {
                   key={`${row.type}-${row.txId}-${row.timestamp}`}
                   style={styles.txRow}
                   onPress={() =>
-                    Linking.openURL(`https://lora.algokit.io/testnet/transaction/${row.txId}`)
+                    Linking.openURL(explorerTxUrl(row.txId))
                   }
                 >
                   <View>

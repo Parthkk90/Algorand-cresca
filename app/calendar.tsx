@@ -15,6 +15,7 @@ import {
   View,
 } from "react-native";
 import { ScreenContainer } from "../components/ScreenContainer";
+import { explorerTxUrl } from "../constants/config";
 import {
   CONTRACT_APP_IDS,
   crescaCalendarService,
@@ -810,7 +811,7 @@ export default function CalendarScreen() {
               <TouchableOpacity
                 onPress={() => {
                   if (!selectedSchedule.txId) return;
-                  void Linking.openURL(`https://lora.algokit.io/testnet/transaction/${selectedSchedule.txId}`);
+                  void Linking.openURL(explorerTxUrl(selectedSchedule.txId));
                 }}
               >
                 <Text style={[styles.detailValue, styles.txLink]}>

@@ -24,6 +24,13 @@ import {
   basketToContractArgs,
   getBasket,
 } from "../constants/baskets";
+import {
+  CONTRACT_APP_IDS,
+  DEFAULT_LEVERAGE,
+  ORACLE_SCALE,
+  CONFIRM_RESET_DELAY_MS,
+  explorerAppUrl,
+} from "../constants/config";
 import { crescaBucketService } from "../services/algorandContractServices";
 import { algorandService } from "../services/algorandService";
 import { dartRouterService } from "../services/dartRouterService";
@@ -39,7 +46,7 @@ import {
 } from "../src/components/ui";
 import { C, H_PAD, R, T } from "../src/theme";
 
-const BUNDLE_PROTOCOL_APP_ID = 758849061;
+const BUNDLE_PROTOCOL_APP_ID = CONTRACT_APP_IDS.CrescaBucketProtocol;
 
 type TradeAction = "long" | "short";
 type TradeState =
@@ -313,7 +320,7 @@ export default function BundleTradeScreen() {
 
       const oraclePriceMap = await dartRouterService.getOraclePrices(asaIds);
       const oracleIds = Array.from(oraclePriceMap.keys());
-      const oracleValues = oracleIds.map((id) => oraclePriceMap.get(id) ?? 100_000_000);
+      const oracleValues = oracleIds.map((id) => oraclePriceMap.get(id) ?? ORACLE_SCALE);
       await crescaBucketService.updateOracle(oracleIds, oracleValues);
 
       setTradeState("broadcasting");
@@ -322,7 +329,7 @@ export default function BundleTradeScreen() {
 
       let currentBucketId = bucketId;
       if (currentBucketId === null) {
-        const created = await crescaBucketService.createBucket(asaIds, weights, 2);
+        const created = await crescaBucketService.createBucket(asaIds, weights, DEFAULT_LEVERAGE);
         currentBucketId = created.bucketId;
         setBucketId(created.bucketId);
       }
@@ -341,7 +348,7 @@ export default function BundleTradeScreen() {
         bucketId: currentBucketId,
         basketId,
         asaIds,
-        leverage: 2,
+        leverage: DEFAULT_LEVERAGE,
         marginAlgo,
         openedAt: Date.now(),
         txId: opened.txId,
@@ -356,7 +363,7 @@ export default function BundleTradeScreen() {
 
       setTimeout(() => {
         setTradeState("idle");
-      }, 2000);
+      }, CONFIRM_RESET_DELAY_MS);
     } catch (e: any) {
       setError(e?.message ?? "Trade execution failed.");
       setTradeState("failed");
@@ -574,7 +581,7 @@ export default function BundleTradeScreen() {
 
         <TouchableOpacity
           onPress={() =>
-            Linking.openURL(`https://lora.algokit.io/testnet/application/${BUNDLE_PROTOCOL_APP_ID}`)
+            Linking.openURL(explorerAppUrl(BUNDLE_PROTOCOL_APP_ID))
           }
           activeOpacity={0.9}
           style={styles.explorerLinkBtn}

@@ -29,6 +29,7 @@ import { TxSuccessCard } from '../components/TxSuccessCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getBasket } from '../constants/baskets';
 import { Anim, Colors, Radius, Shadow, Spacing, Typography } from '../constants/theme';
+import { explorerTxUrl } from '../constants/config';
 import { algorandService, AlgorandTransaction } from '../services/algorandService';
 import { positionStore } from '../services/positionStore';
 import { appPasswordService } from '../services/appPasswordService';
@@ -737,7 +738,7 @@ export default function HomeScreen() {
                       style={isLast ? styles.txRowLast : styles.txRow}
                       activeOpacity={0.85}
                       onPress={() =>
-                        Linking.openURL(`https://lora.algokit.io/testnet/transaction/${txId}`)
+                        Linking.openURL(explorerTxUrl(txId))
                       }
                       accessibilityRole="button"
                       accessibilityLabel={`Open bundle transaction for ${row.tx.basketName} on explorer`}
@@ -785,7 +786,7 @@ export default function HomeScreen() {
                     style={isLast ? styles.txRowLast : styles.txRow}
                     activeOpacity={0.85}
                     onPress={() =>
-                      Linking.openURL(`https://lora.algokit.io/testnet/transaction/${txId}`)
+                      Linking.openURL(explorerTxUrl(txId))
                     }
                     accessibilityRole="button"
                     accessibilityLabel="Open transfer transaction on explorer"
