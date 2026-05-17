@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons } from '@expo/vector-icons';
+import { ViewOffIcon } from '@hugeicons/core-free-icons';
+import { IconWrapper , CrescaInput, CrescaSheet, PrimaryButton } from '../../src/components/ui';
 import { BottomSheetModal } from '@gorhom/bottom-sheet';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -7,10 +8,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ScreenCapture from 'expo-screen-capture';
 import algosdk from 'algosdk';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import * as Keychain from 'react-native-keychain';
 import { ScreenContainer } from '../../components/ScreenContainer';
-import { CrescaInput, CrescaSheet, PrimaryButton } from '../../src/components/ui';
 import { C, H_PAD, R, S, T } from '../../src/theme';
 import { appPasswordService } from '../../services/appPasswordService';
 import { algorandService } from '../../services/algorandService';
@@ -169,7 +169,7 @@ export default function OnboardingWelcomeScreen() {
       </View>
 
       <View style={styles.middleWrap}>
-        <Text style={styles.title}>Let's get started</Text>
+        <Text style={styles.title}>Let&apos;s get started</Text>
         <Text style={styles.subtitle}>
           Sign up or recover your wallet by entering your email below
         </Text>
@@ -247,7 +247,7 @@ export default function OnboardingWelcomeScreen() {
 
             {!seedVisible ? (
               <TouchableOpacity style={styles.seedBlurOverlay} onPress={() => setSeedVisible(true)}>
-                <Ionicons name="eye-off-outline" size={22} color={C.text.tInv} />
+                <IconWrapper icon={ViewOffIcon} size={22} color={C.text.tInv} />
                 <Text style={styles.seedBlurText}>Tap to reveal phrase</Text>
               </TouchableOpacity>
             ) : null}

@@ -1,10 +1,24 @@
-import { Ionicons } from "@expo/vector-icons";
+
+import {
+  Mail01Icon,
+  ArrowDown01Icon,
+  ArrowUp01Icon,
+} from '@hugeicons/core-free-icons';
+import { IconWrapper ,
+  AssetChip,
+  CrescaSheet,
+  CrescaInput,
+  HeaderBar,
+  LiveBadge,
+  PrimaryButton,
+} from '../src/components/ui';
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -18,20 +32,11 @@ import {
   REAL_ASA_IDS,
   DEFAULT_SLIPPAGE_PCT,
   CONFIRM_RESET_DELAY_MS,
-  explorerTxUrl,
 } from "../constants/config";
 import { algorandService } from "../services/algorandService";
 import { dartRouterService, SwapQuote } from "../services/dartRouterService";
 import { pythOracleService } from "../services/pythOracleService";
 import { swapPortfolioStore } from "../services/swapPortfolioStore";
-import {
-  AssetChip,
-  CrescaSheet,
-  CrescaInput,
-  HeaderBar,
-  LiveBadge,
-  PrimaryButton,
-} from "../src/components/ui";
 import { C, H_PAD, R, T } from "../src/theme";
 
 const DART_APP_ID = CONTRACT_APP_IDS.CrescaDartSwap;
@@ -238,7 +243,7 @@ export default function SwapScreen() {
 
   useEffect(() => {
     void initialize();
-  }, []);
+  }, [initialize]);
 
   useEffect(() => {
     const from = String(params.from ?? "").toUpperCase();
@@ -256,7 +261,7 @@ export default function SwapScreen() {
     const live = dartRouterService.isLivePair(fromToken.asaId, toToken.asaId);
     setIsLivePair(live);
     void loadPairRate();
-  }, [fromToken.symbol, toToken.symbol]);
+  }, [fromToken.asaId, loadPairRate, toToken.asaId]);
 
 
   useEffect(() => {
@@ -278,9 +283,9 @@ export default function SwapScreen() {
     return () => {
       if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
     };
-  }, [fromAmount, fromToken.asaId, toToken.asaId]);
+  }, [fromAmount, fromToken.asaId, loadQuote, swapState, toToken.asaId]);
 
-  const initialize = async () => {
+  const initialize = useCallback(async () => {
     setIsBootstrapping(true);
     try {
       const wallet = await algorandService.initializeWallet();
@@ -298,7 +303,7 @@ export default function SwapScreen() {
     } finally {
       setIsBootstrapping(false);
     }
-  };
+  }, []);
 
   const refreshWalletSnapshots = async () => {
     const [{ algo }, asaMap] = await Promise.all([
@@ -315,7 +320,7 @@ export default function SwapScreen() {
     return baseUnits / Math.pow(10, token.decimals);
   };
 
-  const loadPairRate = async () => {
+  const loadPairRate = useCallback(async () => {
     setPythLoading(true);
     try {
       if (fromToken.symbol === toToken.symbol) {
@@ -352,9 +357,9 @@ export default function SwapScreen() {
     } finally {
       setPythLoading(false);
     }
-  };
+  }, [fromToken.asaId, fromToken.symbol, toToken.asaId, toToken.symbol]);
 
-  const loadQuote = async (): Promise<SwapQuote | null> => {
+  const loadQuote = useCallback(async (): Promise<SwapQuote | null> => {
     const amountNumber = Number(fromAmount);
     if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
       return null;
@@ -385,7 +390,7 @@ export default function SwapScreen() {
       setSwapState("failed");
       return null;
     }
-  };
+  }, [fromAmount, fromToken.asaId, fromToken.decimals, toToken.asaId, toToken.decimals]);
 
   const handleSwapDirection = () => {
     const oldFrom = fromToken;
@@ -573,10 +578,13 @@ export default function SwapScreen() {
         mode="title"
         title="Swap"
         onBackPress={() => router.back()}
-        rightSlot={<Ionicons name="mail-outline" size={20} color={C.text.t1} />}
+        rightSlot={<IconWrapper icon={Mail01Icon} size={20} color={C.text.t1} />}
       />
 
-      <View style={styles.body}>
+      <ScrollView
+        contentContainerStyle={styles.body}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.banner}>
           <Text style={styles.bannerTitle}>
             {isLivePair ? "🔵 Live AMM Pool" : "📡 Oracle Estimate"}
@@ -604,7 +612,7 @@ export default function SwapScreen() {
               onPress={() => openTokenSheet("from")}
             >
               <Text style={styles.tokenPillText}>{fromToken.symbol}</Text>
-              <Ionicons name="chevron-down" size={14} color={C.text.t1} />
+              <IconWrapper icon={ArrowDown01Icon} size={14} color={C.text.t1} />
             </TouchableOpacity>
 
             <TextInput
@@ -651,7 +659,7 @@ export default function SwapScreen() {
               onPress={() => openTokenSheet("to")}
             >
               <Text style={styles.tokenPillText}>{toToken.symbol}</Text>
-              <Ionicons name="chevron-down" size={14} color={C.text.t1} />
+              <IconWrapper icon={ArrowDown01Icon} size={14} color={C.text.t1} />
             </TouchableOpacity>
 
             <TextInput
@@ -680,8 +688,8 @@ export default function SwapScreen() {
             onPress={() => setDetailsOpen((prev) => !prev)}
           >
             <Text style={styles.detailsTitle}>Details</Text>
-            <Ionicons
-              name={detailsOpen ? "chevron-up" : "chevron-down"}
+            <IconWrapper
+              icon={detailsOpen ? ArrowUp01Icon : ArrowDown01Icon}
               size={16}
               color={C.text.t2}
             />
@@ -728,7 +736,7 @@ export default function SwapScreen() {
 
         {quoteError ? <Text style={styles.errorText}>{quoteError}</Text> : null}
         {executionError ? <Text style={styles.errorText}>{executionError}</Text> : null}
-      </View>
+      </ScrollView>
 
       <View style={styles.footer}>
         <PrimaryButton
@@ -827,9 +835,9 @@ const styles = StyleSheet.create({
     backgroundColor: C.surfaces.bgBase,
   },
   body: {
-    flex: 1,
     paddingHorizontal: H_PAD,
     paddingTop: 12,
+    paddingBottom: 24,
   },
   banner: {
     backgroundColor: "rgba(110,86,207,0.08)",
@@ -1000,6 +1008,7 @@ const styles = StyleSheet.create({
   footer: {
     paddingHorizontal: H_PAD,
     paddingVertical: 16,
+    marginBottom: 96,
     borderTopWidth: 1,
     borderTopColor: C.borders.bDefault,
     backgroundColor: C.surfaces.bgBase,

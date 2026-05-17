@@ -1,4 +1,12 @@
-import { Ionicons } from "@expo/vector-icons";
+
+import {
+  ArrowDown01Icon,
+  Search01Icon,
+  FilterIcon,
+  CancelCircleIcon,
+  ArrowUp02Icon,
+  ArrowDown02Icon,
+} from '@hugeicons/core-free-icons';
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { useQuery } from "@tanstack/react-query";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -35,6 +43,7 @@ import {
   LiveBadge,
   PrimaryButton,
   StatCard,
+  IconWrapper,
 } from "../src/components/ui";
 import { C, H_PAD, R, S, T } from "../src/theme";
 import {
@@ -85,7 +94,7 @@ const ECOSYSTEMS: Ecosystem[] = [
   "Solana",
 ];
 
-const SORT_OPTIONS: Array<{ key: SortBy; label: string }> = [
+const SORT_OPTIONS: { key: SortBy; label: string }[] = [
   { key: "marketCap", label: "Market Cap" },
   { key: "volume24h", label: "Volume 24h" },
   { key: "price", label: "Price" },
@@ -144,10 +153,10 @@ function formatCompactUsd(value: number): string {
   return `$${value.toFixed(0)}`;
 }
 
-function buildMiniSparkline(price: number, change24h: number): Array<{ timestamp: number; value: number }> {
+function buildMiniSparkline(price: number, change24h: number): { timestamp: number; value: number }[] {
   const points = 20;
   const now = Date.now();
-  const out: Array<{ timestamp: number; value: number }> = [];
+  const out: { timestamp: number; value: number }[] = [];
   let current = Math.max(0.000001, price * (1 - change24h / 100));
 
   for (let i = 0; i < points; i += 1) {
@@ -195,7 +204,7 @@ async function fetchMarketsLive(): Promise<MarketAsset[]> {
     throw new Error(`Market API ${response.status}`);
   }
 
-  const payload = (await response.json()) as Array<Record<string, unknown>>;
+  const payload = (await response.json()) as Record<string, unknown>[];
   const parsed: MarketAsset[] = (Array.isArray(payload) ? payload : [])
     .map((item) => {
       const id = String(item.id ?? "");
@@ -239,7 +248,7 @@ function SortArrow({ active, rotationValue }: SortArrowProps) {
 
   return (
     <Reanimated.View style={arrowStyle}>
-      <Ionicons name="chevron-down" size={12} color={active ? C.brand.teal : C.text.t2} />
+      <IconWrapper icon={ArrowDown01Icon} size={14} color={active ? C.brand.teal : C.text.t2} accessibilityLabel="Sort indicator" />
     </Reanimated.View>
   );
 }
@@ -268,10 +277,18 @@ function MarketRow({
 
       <View style={styles.assetRightWrap}>
         <Text style={styles.assetPrice}>{formatPrice(asset.price)}</Text>
-        <Text style={[styles.assetChange, positive ? styles.positive : styles.negative]}>
-          {positive ? "+" : ""}
-          {asset.change24h.toFixed(2)}%
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 2 }}>
+          <IconWrapper 
+            icon={positive ? ArrowUp02Icon : ArrowDown02Icon} 
+            size={12} 
+            color={positive ? C.semantic.success : C.semantic.danger} 
+            accessibilityLabel={positive ? "Price up" : "Price down"}
+            style={{ marginRight: 2 }}
+          />
+          <Text style={[styles.assetChange, positive ? styles.positive : styles.negative, { marginTop: 0 }]}>
+            {Math.abs(asset.change24h).toFixed(2)}%
+          </Text>
+        </View>
         <Text style={styles.assetCap}>{formatCompactUsd(asset.marketCap)}</Text>
       </View>
     </TouchableOpacity>
@@ -326,7 +343,7 @@ export default function MarketsScreen() {
     refetchInterval: 15_000,
   });
 
-  const assets = marketsQuery.data ?? [];
+  const assets = useMemo(() => marketsQuery.data ?? [], [marketsQuery.data]);
 
   useEffect(() => {
     Animated.timing(searchAnim, {
@@ -497,7 +514,7 @@ export default function MarketsScreen() {
             accessibilityRole="button"
             accessibilityLabel="Toggle search"
           >
-            <Ionicons name="search" size={18} color={C.text.t1} />
+            <IconWrapper icon={Search01Icon} size={20} color={C.text.t1} accessibilityLabel="Search markets" />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -506,14 +523,14 @@ export default function MarketsScreen() {
             accessibilityRole="button"
             accessibilityLabel="Open filters"
           >
-            <Ionicons name="options-outline" size={18} color={C.text.t1} />
+            <IconWrapper icon={FilterIcon} size={20} color={C.text.t1} accessibilityLabel="Filter markets" />
           </TouchableOpacity>
         </View>
       </View>
 
       <Animated.View style={[styles.searchAnimatedWrap, { height: searchHeight, opacity: searchOpacity }]}>
         <View style={styles.searchRow}>
-          <Ionicons name="search" size={16} color={C.text.t2} />
+          <IconWrapper icon={Search01Icon} size={18} color={C.text.t2} accessibilityLabel="Search icon" />
           <CrescaInput
             containerStyle={styles.searchInputContainer}
             inputStyle={styles.searchInput}
@@ -528,7 +545,7 @@ export default function MarketsScreen() {
               setSearchVisible(false);
             }}
           >
-            <Ionicons name="close-circle" size={16} color={C.text.t2} />
+            <IconWrapper icon={CancelCircleIcon} size={18} color={C.text.t2} accessibilityLabel="Clear search" />
           </TouchableOpacity>
         </View>
       </Animated.View>
@@ -704,10 +721,18 @@ export default function MarketsScreen() {
             </View>
 
             <Text style={styles.quickPrice}>{formatPrice(selectedMarket.price)}</Text>
-            <Text style={[styles.quickChange, selectedMarket.change24h >= 0 ? styles.positive : styles.negative]}>
-              {selectedMarket.change24h >= 0 ? "+" : ""}
-              {selectedMarket.change24h.toFixed(2)}%
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+              <IconWrapper 
+                icon={selectedMarket.change24h >= 0 ? ArrowUp02Icon : ArrowDown02Icon} 
+                size={14} 
+                color={selectedMarket.change24h >= 0 ? C.semantic.success : C.semantic.danger} 
+                accessibilityLabel={selectedMarket.change24h >= 0 ? "Price up" : "Price down"}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={[styles.quickChange, selectedMarket.change24h >= 0 ? styles.positive : styles.negative, { marginTop: 0 }]}>
+                {Math.abs(selectedMarket.change24h).toFixed(2)}%
+              </Text>
+            </View>
 
             <View style={styles.quickChartWrap}>
               <LineChart.Provider data={quickChart}>
@@ -848,7 +873,7 @@ const styles = StyleSheet.create({
     backgroundColor: C.surfaces.bgSurface,
   },
   pillActive: {
-    backgroundColor: C.brand.black,
+    backgroundColor: "#007AFF",
   },
   pillText: {
     ...T.smBold,

@@ -1,5 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Ionicons } from "@expo/vector-icons";
+import {
+  ArrowLeft01Icon,
+  Add01Icon,
+  ArrowRight01Icon,
+  ArrowDown01Icon,
+  Calendar01Icon,
+  RecordCircleIcon,
+  CircleIcon,
+} from '@hugeicons/core-free-icons';
+import { IconWrapper , CrescaInput, CrescaSheet, PrimaryButton, StatusTag } from '../src/components/ui';
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { useRouter } from "expo-router";
 import algosdk from "algosdk";
@@ -22,7 +31,6 @@ import {
 } from "../services/algorandContractServices";
 import { algorandService } from "../services/algorandService";
 import { notificationService } from "../services/notificationService";
-import { CrescaInput, CrescaSheet, PrimaryButton, StatusTag } from "../src/components/ui";
 import { C, H_PAD, R, S, T } from "../src/theme";
 
 type LocalSchedule = {
@@ -50,7 +58,7 @@ type CalendarCell = {
 
 const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const PAYMENT_ASSETS: PaymentAsset[] = ["ALGO", "USDC", "ASA"];
-const FREQUENCY_OPTIONS: Array<{ key: FrequencyOption; label: string }> = [
+const FREQUENCY_OPTIONS: { key: FrequencyOption; label: string }[] = [
   { key: "once", label: "Once" },
   { key: "daily", label: "Daily" },
   { key: "weekly", label: "Weekly" },
@@ -188,7 +196,6 @@ export default function CalendarScreen() {
   const startDateSheetRef = useRef<BottomSheetModal | null>(null);
 
   const [walletAddress, setWalletAddress] = useState("");
-  const [walletBalance, setWalletBalance] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -248,8 +255,7 @@ export default function CalendarScreen() {
   }, [selectedDate]);
 
   const requestRefreshWallet = useCallback(async () => {
-    const balance = await algorandService.getBalance();
-    setWalletBalance(Number(balance.algo) || 0);
+    await algorandService.getBalance();
   }, []);
 
   const loadLocalSchedules = useCallback(async (address: string) => {
@@ -606,13 +612,13 @@ export default function CalendarScreen() {
     <ScreenContainer style={styles.container}>
       <View style={styles.headerRow}>
         <TouchableOpacity style={styles.headerIconBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={20} color={C.text.t1} />
+          <IconWrapper icon={ArrowLeft01Icon} size={20} color={C.text.t1} />
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>Scheduled Payments</Text>
 
         <TouchableOpacity style={styles.newBtn} onPress={openNewPaymentSheet}>
-          <Ionicons name="add" size={14} color={C.text.t1} />
+          <IconWrapper icon={Add01Icon} size={14} color={C.text.t1} />
           <Text style={styles.newBtnText}>New</Text>
         </TouchableOpacity>
       </View>
@@ -630,7 +636,7 @@ export default function CalendarScreen() {
           style={styles.monthArrow}
           onPress={() => setMonthDate(new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1))}
         >
-          <Ionicons name="chevron-back" size={18} color={C.text.t1} />
+          <IconWrapper icon={ArrowLeft01Icon} size={18} color={C.text.t1} />
         </TouchableOpacity>
 
         <Text style={styles.monthTitle}>
@@ -641,7 +647,7 @@ export default function CalendarScreen() {
           style={styles.monthArrow}
           onPress={() => setMonthDate(new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1))}
         >
-          <Ionicons name="chevron-forward" size={18} color={C.text.t1} />
+          <IconWrapper icon={ArrowRight01Icon} size={18} color={C.text.t1} />
         </TouchableOpacity>
       </View>
 
@@ -735,7 +741,7 @@ export default function CalendarScreen() {
             }}
           >
             <Text style={styles.selectorText}>{FREQUENCY_OPTIONS.find((option) => option.key === frequency)?.label}</Text>
-            <Ionicons name="chevron-down" size={16} color={C.text.t2} />
+            <IconWrapper icon={ArrowDown01Icon} size={16} color={C.text.t2} />
           </TouchableOpacity>
 
           {frequency === "custom" ? (
@@ -758,7 +764,7 @@ export default function CalendarScreen() {
             }}
           >
             <Text style={styles.selectorText}>{formatDateLabel(startDate)}</Text>
-            <Ionicons name="calendar-outline" size={16} color={C.text.t2} />
+            <IconWrapper icon={Calendar01Icon} size={16} color={C.text.t2} />
           </TouchableOpacity>
 
           <Text style={styles.contractInfoText}>Calendar App ID: {CONTRACT_APP_IDS.CrescaCalendarPayments}</Text>
@@ -860,8 +866,8 @@ export default function CalendarScreen() {
                 style={styles.frequencyOption}
                 onPress={() => setFrequencyDraft(option.key)}
               >
-                <Ionicons
-                  name={selected ? "radio-button-on" : "radio-button-off"}
+                <IconWrapper
+                  icon={selected ? RecordCircleIcon : CircleIcon}
                   size={18}
                   color={selected ? C.brand.black : C.text.t2}
                 />
@@ -896,7 +902,7 @@ export default function CalendarScreen() {
                 )
               }
             >
-              <Ionicons name="chevron-back" size={18} color={C.text.t1} />
+              <IconWrapper icon={ArrowLeft01Icon} size={18} color={C.text.t1} />
             </TouchableOpacity>
 
             <Text style={styles.monthTitle}>
@@ -911,7 +917,7 @@ export default function CalendarScreen() {
                 )
               }
             >
-              <Ionicons name="chevron-forward" size={18} color={C.text.t1} />
+              <IconWrapper icon={ArrowRight01Icon} size={18} color={C.text.t1} />
             </TouchableOpacity>
           </View>
 

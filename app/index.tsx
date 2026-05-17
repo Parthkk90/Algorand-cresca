@@ -1,6 +1,24 @@
-import { Ionicons } from '@expo/vector-icons';
+
+import {
+  ArrowUpRight01Icon,
+  QrCode01Icon,
+  Exchange01Icon,
+  ContactlessPayment01Icon,
+  RecordCircleIcon,
+  Calendar02Icon,
+  ArrowUp02Icon,
+  ArrowDown02Icon,
+  MinusIcon,
+  Invoice01Icon,
+  Layers01Icon,
+  ArrowDownLeft01Icon,
+  Cancel01Icon,
+  ArrowRight01Icon,
+  Copy01Icon,
+} from '@hugeicons/core-free-icons';
+import { IconWrapper } from '../src/components/ui';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import algosdk from 'algosdk';
 import QRCode from 'react-native-qrcode-svg';
@@ -20,6 +38,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { AppNoticeAction, AppNoticeModal, AppNoticeTone } from '../components/AppNoticeModal';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { HapticButton } from '../components/HapticButton';
@@ -29,14 +48,13 @@ import { TxSuccessCard } from '../components/TxSuccessCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getBasket } from '../constants/baskets';
 import { Anim, Colors, Radius, Shadow, Spacing, Typography } from '../constants/theme';
-import { explorerTxUrl } from '../constants/config';
 import { algorandService, AlgorandTransaction } from '../services/algorandService';
 import { positionStore } from '../services/positionStore';
 import { appPasswordService } from '../services/appPasswordService';
 
 type QuickAction = {
   title: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: any;
   action: 'send' | 'receive' | 'swap';
 };
 
@@ -66,16 +84,16 @@ type HomeActivityRow =
   | { kind: 'bundle'; tx: BundleHomeTx; tsMs: number; key: string };
 
 const QUICK_ACTIONS: QuickAction[] = [
-  { title: 'Send', icon: 'send', action: 'send' },
-  { title: 'Receive', icon: 'qr-code-outline', action: 'receive' },
-  { title: 'Swap', icon: 'swap-horizontal', action: 'swap' },
+  { title: 'Send', icon: ArrowUpRight01Icon, action: 'send' },
+  { title: 'Receive', icon: QrCode01Icon, action: 'receive' },
+  { title: 'Swap', icon: Exchange01Icon, action: 'swap' },
 ];
 
 const HOME_MARKETS_CACHE_KEY = 'home_market_snapshot_cache_v1';
 const HOME_MARKETS_RATE_LIMIT_MS = 120_000;
 
-const CRESCA_LOGO_MARK = require('../assets/images/cresca-logo-mark.png');
-const CRESCA_LOGO_WORDMARK = require('../assets/images/cresca-logo-wordmark.png');
+const CRESCA_LOGO_MARK = require('../assets/images/cresca_logo.png');
+const CRESCA_LOGO_WORDMARK = require('../assets/images/cresca_logo.png');
 
 
 export default function HomeScreen() {
@@ -175,7 +193,7 @@ export default function HomeScreen() {
     setNotice({ title, message, tone, actions });
   };
 
-  const loadTxHistory = async (addr: string) => {
+  const loadTxHistory = useCallback(async (addr: string) => {
     if (!addr?.trim()) {
       setTxHistory([]);
       setBundleTxHistory([]);
@@ -208,9 +226,9 @@ export default function HomeScreen() {
     } finally {
       setTxLoading(false);
     }
-  };
+  }, []);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const wallet = await algorandService.initializeWallet();
     const bal = await algorandService.getBalance();
     setAddress(wallet.address);
@@ -220,9 +238,9 @@ export default function HomeScreen() {
       loadAutomationSummary(wallet.address),
       loadTxHistory(wallet.address),
     ]);
-  };
+  }, [loadAutomationSummary, loadMarketSnapshot, loadTxHistory]);
 
-  const refreshLiveData = async () => {
+  const refreshLiveData = useCallback(async () => {
     const resolvedAddress = address?.trim();
     if (!resolvedAddress) return;
 
@@ -238,9 +256,9 @@ export default function HomeScreen() {
       loadAutomationSummary(resolvedAddress),
       loadTxHistory(resolvedAddress),
     ]);
-  };
+  }, [address, loadAutomationSummary, loadMarketSnapshot, loadTxHistory]);
 
-  const loadMarketSnapshot = async () => {
+  const loadMarketSnapshot = useCallback(async () => {
     const cachedRaw = await AsyncStorage.getItem(HOME_MARKETS_CACHE_KEY);
     const cached = cachedRaw ? (JSON.parse(cachedRaw) as MarketSnapshotItem[]) : [];
 
@@ -285,9 +303,9 @@ export default function HomeScreen() {
       console.warn('Could not load live market snapshot:', error);
       setMarketSnapshot(cached);
     }
-  };
+  }, []);
 
-  const loadAutomationSummary = async (addr?: string) => {
+  const loadAutomationSummary = useCallback(async (addr?: string) => {
     try {
       const key = addr ?? address;
       if (!key) return;
@@ -312,7 +330,7 @@ export default function HomeScreen() {
       setActiveScheduleCount(0);
       setNextDueLabel('Schedule data unavailable');
     }
-  };
+  }, [address]);
 
   useEffect(() => {
     const introAnim = Animated.parallel([
@@ -372,7 +390,7 @@ export default function HomeScreen() {
       clearTimeout(introTimer);
       ringPulse.stop();
     };
-  }, []);
+  }, [load, logoOpacity, logoScale, ringScale]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -391,7 +409,7 @@ export default function HomeScreen() {
     }, 30000);
 
     return () => clearInterval(id);
-  }, [isLoading, introVisible, showUnlock]);
+  }, [isLoading, introVisible, refreshLiveData, showUnlock]);
 
   // Stagger entrance animation — fires once data is ready
   useEffect(() => {
@@ -420,7 +438,7 @@ export default function HomeScreen() {
       makeAnim(actionsAnim,  actionsSlide,  80),
       makeAnim(marketAnim,   marketSlide,   160),
     ]).start();
-  }, [isLoading, introVisible, showUnlock]);
+  }, [actionsAnim, actionsSlide, balanceAnim, balanceSlide, introVisible, isLoading, marketAnim, marketSlide, showUnlock]);
 
   const onUnlockApp = async () => {
     if (!unlockPassword) {
@@ -522,7 +540,11 @@ export default function HomeScreen() {
   if (showUnlock) {
     return (
       <ScreenContainer style={styles.obsWrap}>
-        <View style={[styles.obsContent, styles.unlockContent]}>
+        <ScrollView
+          contentContainerStyle={[styles.obsContent, styles.unlockContent]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.obsHeader}>
             <View style={styles.obsIconSpacer} />
             <Image source={CRESCA_LOGO_WORDMARK} style={styles.obsBrandLogo} resizeMode="contain" />
@@ -560,7 +582,7 @@ export default function HomeScreen() {
               <Text style={styles.obsPrimaryText}>{unlockBusy ? 'Unlocking...' : 'Unlock'}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </ScrollView>
       </ScreenContainer>
     );
   }
@@ -579,7 +601,12 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Animated.View style={{ opacity: balanceAnim, transform: [{ translateY: balanceSlide }] }}>
-          <View style={[styles.hero, isCompact && styles.heroCompact]}>
+          <LinearGradient
+            colors={['#e8f0fe', '#8ab4f8', '#e8f0fe']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.hero, isCompact && styles.heroCompact]}
+          >
             <View style={styles.heroTop}>
               <Image
                 source={CRESCA_LOGO_WORDMARK}
@@ -587,22 +614,37 @@ export default function HomeScreen() {
                 resizeMode="contain"
               />
               <View style={styles.badge}>
-                <View style={styles.badgeDot} />
+                <IconWrapper icon={RecordCircleIcon} size={12} color="#00D9C0" accessibilityLabel="Testnet Active Indicator" style={{ marginRight: 4 }} />
                 <Text style={styles.badgeText}>Testnet Active</Text>
               </View>
             </View>
-            <Text style={styles.totalLabel}>Portfolio Value</Text>
-            <Text style={[styles.totalValue, isCompact && styles.totalValueCompact, { fontVariant: ['tabular-nums'] }]}>
-              ${(parseFloat(balance) * 0.18).toFixed(2)}
-            </Text>
-            <Text
-              style={[styles.subValue, isCompact && styles.subValueCompact, { fontVariant: ['tabular-nums'] }]}
-              accessibilityLabel={`Balance: ${balance} ALGO`}
-            >
-              {balance} ALGO
-            </Text>
-            <Text style={styles.address}>{shortAddress}</Text>
-          </View>
+            
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              <View>
+                <Text style={styles.totalLabel}>Portfolio Value</Text>
+                <Text style={[styles.totalValue, isCompact && styles.totalValueCompact, { fontVariant: ['tabular-nums'] }]}>
+                  ${(parseFloat(balance) * 0.18).toFixed(2)}
+                </Text>
+                <Text
+                  style={[styles.subValue, isCompact && styles.subValueCompact, { fontVariant: ['tabular-nums'] }]}
+                  accessibilityLabel={`Balance: ${balance} ALGO`}
+                >
+                  {balance} ALGO
+                </Text>
+                <Text style={styles.address}>{shortAddress}</Text>
+              </View>
+              
+              <View style={{ alignItems: 'flex-end', opacity: 0.85, paddingBottom: 6 }}>
+                <IconWrapper 
+                  icon={ContactlessPayment01Icon} 
+                  size={26} 
+                  color="#555" 
+                  style={{ marginTop: -8, marginRight: 8, opacity: 0.7 }}
+                  accessibilityLabel="Contactless payment supported" 
+                />
+              </View>
+            </View>
+          </LinearGradient>
         </Animated.View>
 
         <Animated.View style={{ opacity: actionsAnim, transform: [{ translateY: actionsSlide }] }}>
@@ -625,7 +667,7 @@ export default function HomeScreen() {
                 accessibilityLabel={item.title}
               >
                 <View style={styles.quickIcon}>
-                  <Ionicons name={item.icon} size={18} color={Colors.navy} />
+                  <IconWrapper icon={item.icon} size={20} color={Colors.navy} accessibilityLabel={`${item.title} action`} />
                 </View>
                 <Text style={styles.quickText}>{item.title}</Text>
               </HapticButton>
@@ -661,9 +703,9 @@ export default function HomeScreen() {
                     </Text>
                   </View>
                   <View style={styles.changeRow}>
-                    <Ionicons
-                      name={row.change24h > 0 ? 'arrow-up' : row.change24h < 0 ? 'arrow-down' : 'remove'}
-                      size={11}
+                    <IconWrapper
+                      icon={row.change24h > 0 ? ArrowUp02Icon : row.change24h < 0 ? ArrowDown02Icon : MinusIcon}
+                      size={12}
                       color={row.change24h > 0 ? Colors.gain : row.change24h < 0 ? Colors.loss : Colors.text.muted}
                     />
                     <Text
@@ -696,7 +738,7 @@ export default function HomeScreen() {
           <View style={styles.automationCard}>
             <View style={styles.rowBetween}>
               <Text style={styles.automationTitle}>{activeScheduleCount} active schedules</Text>
-              <Ionicons name="calendar" size={16} color={Colors.steel} />
+              <IconWrapper icon={Calendar02Icon} size={18} color={Colors.steel} />
             </View>
             <Text style={styles.automationMeta}>{nextDueLabel}</Text>
           </View>
@@ -716,7 +758,7 @@ export default function HomeScreen() {
               </>
             ) : activityHistory.length === 0 ? (
               <View style={styles.txEmpty}>
-                <Ionicons name="receipt-outline" size={28} color={Colors.sky} />
+                <IconWrapper icon={Invoice01Icon} size={32} color={Colors.sky} />
                 <Text style={styles.txEmptyText}>No transactions yet</Text>
               </View>
             ) : (
@@ -744,7 +786,7 @@ export default function HomeScreen() {
                       accessibilityLabel={`Open bundle transaction for ${row.tx.basketName} on explorer`}
                     >
                       <View style={[styles.txIcon, styles.txIconBundle]}>
-                        <Ionicons name="layers-outline" size={14} color={Colors.navy} />
+                        <IconWrapper icon={Layers01Icon} size={16} color={Colors.navy} />
                       </View>
 
                       <View style={styles.txMeta}>
@@ -792,9 +834,9 @@ export default function HomeScreen() {
                     accessibilityLabel="Open transfer transaction on explorer"
                   >
                     <View style={[styles.txIcon, isSent ? styles.txIconSent : styles.txIconRecv]}>
-                      <Ionicons
-                        name={isSent ? 'arrow-up' : 'arrow-down'}
-                        size={14}
+                      <IconWrapper
+                        icon={isSent ? ArrowUpRight01Icon : ArrowDownLeft01Icon}
+                        size={16}
                         color={isSent ? Colors.loss : Colors.gain}
                       />
                     </View>
@@ -835,7 +877,7 @@ export default function HomeScreen() {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Quick Pay</Text>
               <TouchableOpacity onPress={() => setShowQuickPay(false)}>
-                <Ionicons name="close" size={22} color={Colors.steel} />
+                <IconWrapper icon={Cancel01Icon} size={24} color={Colors.steel} />
               </TouchableOpacity>
             </View>
 
@@ -898,7 +940,7 @@ export default function HomeScreen() {
                 ) : (
                   <>
                     <Text style={styles.modalSendText}>Send</Text>
-                    <Ionicons name="arrow-forward" size={16} color={Colors.white} />
+                    <IconWrapper icon={ArrowRight01Icon} size={18} color={Colors.white} />
                   </>
                 )}
               </HapticButton>
@@ -918,7 +960,7 @@ export default function HomeScreen() {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Receive ALGO</Text>
               <TouchableOpacity onPress={() => setShowReceiveModal(false)}>
-                <Ionicons name="close" size={22} color={Colors.steel} />
+                <IconWrapper icon={Cancel01Icon} size={24} color={Colors.steel} />
               </TouchableOpacity>
             </View>
 
@@ -939,7 +981,7 @@ export default function HomeScreen() {
               accessibilityLabel="Copy wallet address"
             >
               <Text style={styles.modalSendText}>Copy Address</Text>
-              <Ionicons name="copy-outline" size={16} color={Colors.white} />
+              <IconWrapper icon={Copy01Icon} size={18} color={Colors.white} />
             </HapticButton>
           </View>
         </View>
@@ -1026,7 +1068,7 @@ const styles = StyleSheet.create({
   },
   obsPrimaryText: { color: Colors.obsidian.background, fontSize: Typography.base, fontWeight: Typography.bold },
   disabledBtn: { opacity: 0.6 },
-  unlockContent: { flex: 1, justifyContent: 'center' },
+  unlockContent: { flexGrow: 1, justifyContent: 'center' },
   unlockError: {
     color: Colors.obsidian.warning,
     marginTop: 10,

@@ -1,4 +1,12 @@
-import { Ionicons } from "@expo/vector-icons";
+import {
+  ArrowLeft01Icon,
+  LockKeyIcon,
+  ViewIcon,
+  ViewOffIcon,
+  ArrowRight01Icon,
+  ArrowDown01Icon,
+  MoreHorizontalIcon,
+} from '@hugeicons/core-free-icons';
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
@@ -20,6 +28,7 @@ import { ScreenContainer } from "../components/ScreenContainer";
 import {
   CrescaInput,
   CrescaSheet,
+  IconWrapper,
   NetworkAddressRow,
   PrimaryButton,
 } from "../src/components/ui";
@@ -311,13 +320,13 @@ export default function PaymentsScreen() {
     <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.headerIconBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={20} color={C.text.t1} />
+          <IconWrapper icon={ArrowLeft01Icon} size={20} color={C.text.t1} />
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>Security</Text>
 
         <View style={styles.headerIconBtn}>
-          <Ionicons name="lock-closed-outline" size={20} color={C.text.t1} />
+          <IconWrapper icon={LockKeyIcon} size={20} color={C.text.t1} />
         </View>
       </View>
 
@@ -327,12 +336,12 @@ export default function PaymentsScreen() {
         <View style={styles.manageCard}>
           <TouchableOpacity style={styles.manageRow} onPress={openChooseNetworkSheet}>
             <Text style={styles.manageRowLabel}>Reveal Key</Text>
-            <Ionicons name="eye-outline" size={18} color={C.brand.teal} />
+            <IconWrapper icon={ViewIcon} size={18} color={C.brand.teal} />
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.manageRow} onPress={openSeedPhraseSheet}>
             <Text style={styles.manageRowLabel}>Reveal Seed Phrase</Text>
-            <Ionicons name="eye-outline" size={18} color={C.brand.teal} />
+            <IconWrapper icon={ViewIcon} size={18} color={C.brand.teal} />
           </TouchableOpacity>
         </View>
 
@@ -343,7 +352,7 @@ export default function PaymentsScreen() {
             <Text style={styles.protectionTitle}>2 Factor Authentication</Text>
             <Text style={styles.protectionSubtitle}>Set Authenticated limit for Transaction</Text>
           </View>
-          <Ionicons name="chevron-forward" size={16} color={C.text.t2} />
+          <IconWrapper icon={ArrowRight01Icon} size={16} color={C.text.t2} />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -356,7 +365,7 @@ export default function PaymentsScreen() {
           <Text style={styles.protectionTitle}>Session Lock</Text>
           <View style={styles.sessionValueWrap}>
             <Text style={styles.sessionValue}>{sessionLockValue}</Text>
-            <Ionicons name="chevron-down" size={14} color={C.text.t2} />
+            <IconWrapper icon={ArrowDown01Icon} size={14} color={C.text.t2} />
           </View>
         </TouchableOpacity>
 
@@ -383,7 +392,7 @@ export default function PaymentsScreen() {
             <Text style={[styles.sectionLabel, styles.allowanceLabel]}>Token Allowance</Text>
             <TouchableOpacity style={styles.allowanceRow} onPress={() => limitSheetRef.current?.present()}>
               <Text style={styles.allowanceValue}>$500.00</Text>
-              <Ionicons name="ellipsis-horizontal" size={18} color={C.text.t2} />
+              <IconWrapper icon={MoreHorizontalIcon} size={18} color={C.text.t2} />
             </TouchableOpacity>
           </View>
         ) : null}
@@ -483,7 +492,7 @@ export default function PaymentsScreen() {
             style={styles.eyeInline}
             onPress={() => setPrivateKeyVisible((prev) => !prev)}
           >
-            <Ionicons name={privateKeyVisible ? "eye" : "eye-outline"} size={16} color={C.brand.teal} />
+            <IconWrapper icon={privateKeyVisible ? ViewOffIcon : ViewIcon} size={16} color={C.brand.teal} />
             <Text style={styles.eyeInlineText}>Toggle key visibility</Text>
           </TouchableOpacity>
 
