@@ -1,17 +1,21 @@
-import { Ionicons } from "@expo/vector-icons";
+import { InformationCircleIcon, ArrowUp01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Linking,
+  PanResponder,
+  LayoutChangeEvent,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-import Animated, {
+import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -41,6 +45,7 @@ import {
   CrescaInput,
   CrescaSheet,
   HeaderBar,
+  IconWrapper,
   PrimaryButton,
   StatusTag,
 } from "../src/components/ui";
@@ -103,14 +108,12 @@ function parseAssetsParam(assetsRaw: string | undefined, fallback: BasketAsset[]
   if (!assetsRaw) return fallback;
 
   try {
-    const parsed = JSON.parse(assetsRaw) as Array<
-      | string
+    const parsed = JSON.parse(assetsRaw) as (| string
       | {
           symbol?: string;
           weight?: number;
           asaId?: number;
-        }
-    >;
+        })[];
 
     if (!Array.isArray(parsed) || parsed.length === 0) return fallback;
 
@@ -173,10 +176,10 @@ export default function BundleTradeScreen() {
   const confirmSheetRef = useRef<BottomSheetModal | null>(null);
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
-  const [walletAddress, setWalletAddress] = useState("");
   const [algoBalance, setAlgoBalance] = useState(0);
 
   const [amountUsdc, setAmountUsdc] = useState("");
+  const [leverage, setLeverage] = useState<number>(Math.min(DEFAULT_LEVERAGE, 20));
   const [action, setAction] = useState<TradeAction>("long");
   const [tradeState, setTradeState] = useState<TradeState>("idle");
 
@@ -185,7 +188,6 @@ export default function BundleTradeScreen() {
   const [lastTxId, setLastTxId] = useState<string | null>(null);
 
   const [usdPrices, setUsdPrices] = useState<Record<string, number>>({});
-  const [algoOraclePrices, setAlgoOraclePrices] = useState<Map<number, number>>(new Map());
   const [algoUsd, setAlgoUsd] = useState<number | null>(null);
   const [bucketId, setBucketId] = useState<number | null>(null);
 
@@ -196,24 +198,54 @@ export default function BundleTradeScreen() {
     toggleX.value = withTiming(action === "long" ? 0 : toggleWidth / 2, { duration: 200 });
   }, [action, toggleWidth, toggleX]);
 
-  useEffect(() => {
-    void initialize();
-  }, []);
-
   const toggleAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: toggleX.value }],
   }));
 
-  const initialize = async () => {
+  // Slider refs for leverage control (0x - 20x)
+  const sliderWidthRef = useRef(0);
+  const panX = useRef(new Animated.Value(0)).current;
+  const maxLeverage = 20;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        panX.setOffset((panX as any).__getValue());
+      },
+      onPanResponderMove: (e, gestureState) => {
+        const dx = gestureState.dx;
+        const width = sliderWidthRef.current || 1;
+        const current = (panX as any).__getValue() + dx;
+        const clamped = Math.max(0, Math.min(width, current));
+        const ratio = clamped / width;
+        const value = Math.round(ratio * maxLeverage * 10) / 10; // 0.1 steps
+        setLeverage(Number(value.toFixed(1)));
+        panX.setValue(clamped);
+      },
+      onPanResponderRelease: () => {
+        panX.flattenOffset();
+      },
+    }),
+  ).current;
+
+  const onSliderLayout = (e: LayoutChangeEvent) => {
+    sliderWidthRef.current = e.nativeEvent.layout.width;
+    // position initial panX according to current leverage
+    const width = sliderWidthRef.current || 1;
+    const initial = (leverage / maxLeverage) * width;
+    panX.setValue(initial);
+  };
+
+  const initialize = useCallback(async () => {
     setIsBootstrapping(true);
     try {
-      const wallet = await algorandService.initializeWallet();
-      setWalletAddress(wallet.address);
+      await algorandService.initializeWallet();
 
-      const [{ algo }, prices, oraclePrices, algoPrice] = await Promise.all([
+      const [{ algo }, prices, algoPrice] = await Promise.all([
         algorandService.getBalance(),
         pythOracleService.getPrices(symbols),
-        dartRouterService.getOraclePrices(asaIds),
         pythOracleService.getPrice("ALGO"),
       ]);
 
@@ -223,7 +255,6 @@ export default function BundleTradeScreen() {
       });
 
       setUsdPrices(usdMap);
-      setAlgoOraclePrices(oraclePrices);
       setAlgoUsd(algoPrice?.price ?? null);
       setAlgoBalance(Number(algo));
     } catch (e: any) {
@@ -231,7 +262,11 @@ export default function BundleTradeScreen() {
     } finally {
       setIsBootstrapping(false);
     }
-  };
+  }, [symbols]);
+
+  useEffect(() => {
+    void initialize();
+  }, [initialize]);
 
   const parsedAmountUsdc = Number(amountUsdc);
   const safeAmountUsdc = Number.isFinite(parsedAmountUsdc) ? parsedAmountUsdc : 0;
@@ -267,7 +302,7 @@ export default function BundleTradeScreen() {
         return { label: "Retry", loading: false };
       case "idle":
       default:
-        return { label: action === "long" ? "Long Position" : "Short Position", loading: false };
+        return { label: "Execute Trade", loading: false };
     }
   }, [tradeState, action]);
 
@@ -329,7 +364,8 @@ export default function BundleTradeScreen() {
 
       let currentBucketId = bucketId;
       if (currentBucketId === null) {
-        const created = await crescaBucketService.createBucket(asaIds, weights, DEFAULT_LEVERAGE);
+        const useLev = Math.min(leverage, 20);
+        const created = await crescaBucketService.createBucket(asaIds, weights, useLev);
         currentBucketId = created.bucketId;
         setBucketId(created.bucketId);
       }
@@ -348,7 +384,7 @@ export default function BundleTradeScreen() {
         bucketId: currentBucketId,
         basketId,
         asaIds,
-        leverage: DEFAULT_LEVERAGE,
+        leverage: Math.min(leverage, 20),
         marginAlgo,
         openedAt: Date.now(),
         txId: opened.txId,
@@ -391,12 +427,15 @@ export default function BundleTradeScreen() {
             accessibilityRole="button"
             accessibilityLabel="Open bundle details"
           >
-            <Ionicons name="information-circle-outline" size={20} color={C.text.t1} />
+            <IconWrapper icon={InformationCircleIcon} size={20} color={C.text.t1} />
           </TouchableOpacity>
         }
       />
 
-      <View style={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.compositionCard}>
           <View style={styles.rowBetween}>
             <Text style={styles.cardMutedLabel}>Bundle</Text>
@@ -426,8 +465,8 @@ export default function BundleTradeScreen() {
               onPress={() => setAllocationOpen((prev) => !prev)}
               activeOpacity={0.9}
             >
-              <Ionicons
-                name={allocationOpen ? "chevron-up" : "chevron-forward"}
+              <IconWrapper
+                icon={allocationOpen ? ArrowUp01Icon : ArrowRight01Icon}
                 size={16}
                 color={C.text.t2}
               />
@@ -465,7 +504,7 @@ export default function BundleTradeScreen() {
             setToggleWidth(event.nativeEvent.layout.width);
           }}
         >
-          <Animated.View
+          <Reanimated.View
             style={[
               styles.toggleIndicator,
               { width: toggleWidth / 2 },
@@ -486,6 +525,19 @@ export default function BundleTradeScreen() {
           >
             <Text style={[styles.toggleText, action === "short" && styles.toggleTextActive]}>Short</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* Leverage slider (0x - 20x) */}
+        <View style={styles.leverageWrap}>
+          <Text style={styles.leverageLabel}>Leverage: {leverage}×</Text>
+          <View style={styles.leverageTrack} onLayout={onSliderLayout} {...panResponder.panHandlers}>
+            <Animated.View style={[styles.leverageFill, { width: (panX as any) }]} />
+            <Animated.View style={[styles.leverageHandle, { transform: [{ translateX: (panX as any) }] }]} {...panResponder.panHandlers} />
+          </View>
+          <View style={styles.leverageLabelsRow}>
+            <Text style={styles.leverageMin}>0x</Text>
+            <Text style={styles.leverageMax}>20x</Text>
+          </View>
         </View>
 
         <View style={styles.amountWrap}>
@@ -519,14 +571,10 @@ export default function BundleTradeScreen() {
           </Text>
         </View>
 
-        <View style={styles.atomicBadge}>
-          <Text style={styles.atomicText}>📦 Bundle size: </Text>
-          <Text style={styles.atomicNumbers}>{atomicSize}</Text>
-          <Text style={styles.atomicText}> atomic txns</Text>
-        </View>
+        {/* Bundle size removed per request */}
 
         <View style={styles.tagsRow}>
-          <StatusTag label="Leverage: 2×" variant="warning" />
+          <StatusTag label={`Leverage: ${leverage}×`} variant="warning" />
           <StatusTag label="Risk: Medium" variant="warning" />
           <StatusTag label="Protocol: Cresca" variant="purple" />
         </View>
@@ -534,7 +582,7 @@ export default function BundleTradeScreen() {
         <Text style={styles.priceImpactText}>Price impact: {priceImpactLabel}</Text>
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      </View>
+      </ScrollView>
 
       <View style={styles.footer}>
         <PrimaryButton
@@ -658,9 +706,9 @@ const styles = StyleSheet.create({
     backgroundColor: C.surfaces.bgBase,
   },
   content: {
-    flex: 1,
     paddingHorizontal: H_PAD,
     paddingTop: 16,
+    paddingBottom: 24,
   },
   rowBetween: {
     flexDirection: "row",
@@ -767,6 +815,51 @@ const styles = StyleSheet.create({
   toggleTextActive: {
     color: C.text.tInv,
   },
+  leverageWrap: {
+    marginTop: 12,
+  },
+  leverageLabel: {
+    ...T.smBold,
+    color: C.text.t1,
+    marginBottom: 8,
+  },
+  leverageTrack: {
+    height: 36,
+    backgroundColor: C.surfaces.bgBase,
+    borderRadius: 18,
+    overflow: "hidden",
+    justifyContent: "center",
+  },
+  leverageFill: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: C.brand.teal,
+  },
+  leverageHandle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: C.surfaces.bgSurface,
+    borderWidth: 2,
+    borderColor: C.brand.black,
+    position: "absolute",
+    top: 4,
+  },
+  leverageLabelsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 6,
+  },
+  leverageMin: {
+    ...T.sm,
+    color: C.text.t2,
+  },
+  leverageMax: {
+    ...T.sm,
+    color: C.text.t2,
+  },
   amountWrap: {
     marginTop: 12,
   },
@@ -836,6 +929,7 @@ const styles = StyleSheet.create({
   footer: {
     paddingHorizontal: H_PAD,
     paddingVertical: 16,
+    marginBottom: 96,
     borderTopWidth: 1,
     borderTopColor: C.borders.bDefault,
     backgroundColor: C.surfaces.bgBase,

@@ -1,4 +1,19 @@
-import { Ionicons } from "@expo/vector-icons";
+import {
+  Layers01Icon,
+  Search01Icon,
+  Cancel01Icon,
+  FilterIcon,
+  RecordCircleIcon,
+  CircleIcon,
+} from '@hugeicons/core-free-icons';
+import { IconWrapper ,
+  AssetChip,
+  CrescaInput,
+  CrescaSheet,
+  PrimaryButton,
+  StatusTag,
+  StatusTagVariant,
+} from '../src/components/ui';
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { useRouter } from "expo-router";
 import React, { useMemo, useRef, useState } from "react";
@@ -17,14 +32,6 @@ import Animated, {
 } from "react-native-reanimated";
 import { ScreenContainer } from "../components/ScreenContainer";
 import { BASKETS, Basket } from "../constants/baskets";
-import {
-  AssetChip,
-  CrescaInput,
-  CrescaSheet,
-  PrimaryButton,
-  StatusTag,
-  StatusTagVariant,
-} from "../src/components/ui";
 import { C, H_PAD, R, S, T } from "../src/theme";
 
 type Sector = "All" | "DeFi" | "AI" | "Stable" | "Leveraged" | "Algorand";
@@ -42,7 +49,7 @@ type BundleCardModel = {
 
 const SECTORS: Sector[] = ["All", "DeFi", "AI", "Stable", "Leveraged", "Algorand"];
 
-const SORT_OPTIONS: Array<{ key: SortOption; label: string }> = [
+const SORT_OPTIONS: { key: SortOption; label: string }[] = [
   { key: "value", label: "By Value" },
   { key: "gain", label: "By 24h Gain" },
   { key: "assets", label: "By # Assets" },
@@ -211,11 +218,6 @@ export default function BundlesListScreen() {
     });
   }, [appliedSort, searchQuery, selectedSector]);
 
-  const sortLabel = useMemo(
-    () => SORT_OPTIONS.find((option) => option.key === appliedSort)?.label ?? "By Value",
-    [appliedSort],
-  );
-
   const toggleSearch = () => {
     const next = !searchOpen;
     setSearchOpen(next);
@@ -271,7 +273,7 @@ export default function BundlesListScreen() {
       <View style={styles.card}>
         <View style={styles.cardTopRow}>
           <View style={styles.iconCircle}>
-            <Ionicons name="layers-outline" size={18} color={C.brand.black} />
+            <IconWrapper icon={Layers01Icon} size={18} color={C.brand.black} />
           </View>
 
           <View style={styles.cardTitleWrap}>
@@ -347,7 +349,7 @@ export default function BundlesListScreen() {
                 accessibilityLabel="Open bundle search"
                 onPress={toggleSearch}
               >
-                <Ionicons name="search" size={20} color={C.brand.black} />
+                <IconWrapper icon={Search01Icon} size={20} color={C.brand.black} />
               </TouchableOpacity>
             </View>
 
@@ -365,7 +367,7 @@ export default function BundlesListScreen() {
                   accessibilityLabel="Close bundle search"
                   onPress={toggleSearch}
                 >
-                  <Ionicons name="close" size={20} color={C.text.t2} />
+                  <IconWrapper icon={Cancel01Icon} size={20} color={C.text.t2} />
                 </TouchableOpacity>
               </View>
             </Animated.View>
@@ -390,7 +392,7 @@ export default function BundlesListScreen() {
                   sortSheetRef.current?.present();
                 }}
               >
-                <Ionicons name="funnel-outline" size={14} color={C.text.t1} />
+                <IconWrapper icon={FilterIcon} size={14} color={C.text.t1} />
                 <Text style={styles.sortPillText}>Sort</Text>
               </TouchableOpacity>
             </View>
@@ -419,8 +421,8 @@ export default function BundlesListScreen() {
                 accessibilityLabel={`Sort ${option.label}`}
                 onPress={() => setSortDraft(option.key)}
               >
-                <Ionicons
-                  name={selected ? "radio-button-on" : "radio-button-off"}
+                <IconWrapper
+                  icon={selected ? RecordCircleIcon : CircleIcon}
                   size={18}
                   color={selected ? C.brand.black : C.text.t2}
                 />

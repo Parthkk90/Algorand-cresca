@@ -1,4 +1,17 @@
-import { Ionicons } from "@expo/vector-icons";
+import {
+  ArrowLeft01Icon,
+  Add01Icon,
+  Archive01Icon,
+  RecordCircleIcon,
+  CircleIcon,
+} from '@hugeicons/core-free-icons';
+import { IconWrapper ,
+  AssetChip,
+  CrescaInput,
+  CrescaSheet,
+  PrimaryButton,
+  StatusTag,
+} from '../src/components/ui';
 import Slider from "@react-native-community/slider";
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -22,13 +35,6 @@ import { CONTRACT_APP_IDS, crescaBucketService } from "../services/algorandContr
 import { algorandService } from "../services/algorandService";
 import { dartRouterService } from "../services/dartRouterService";
 import { positionStore, StoredPosition } from "../services/positionStore";
-import {
-  AssetChip,
-  CrescaInput,
-  CrescaSheet,
-  PrimaryButton,
-  StatusTag,
-} from "../src/components/ui";
 import { C, H_PAD, R, S, T } from "../src/theme";
 
 type PositionModel = {
@@ -631,7 +637,7 @@ export default function BucketsScreen() {
           accessibilityLabel="Go back"
           onPress={() => router.back()}
         >
-          <Ionicons name="arrow-back" size={20} color={C.text.t1} />
+          <IconWrapper icon={ArrowLeft01Icon} size={20} color={C.text.t1} />
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>My Buckets</Text>
@@ -645,7 +651,7 @@ export default function BucketsScreen() {
             newBucketSheetRef.current?.present();
           }}
         >
-          <Ionicons name="add" size={14} color={C.text.t1} />
+          <IconWrapper icon={Add01Icon} size={14} color={C.text.t1} />
           <Text style={styles.newBucketButtonText}>New</Text>
         </TouchableOpacity>
       </View>
@@ -711,7 +717,7 @@ export default function BucketsScreen() {
         ListEmptyComponent={
           !loading ? (
             <View style={styles.emptyWrap}>
-              <Ionicons name="cube-outline" size={32} color={C.text.t2} />
+              <IconWrapper icon={Archive01Icon} size={32} color={C.text.t2} />
               <Text style={styles.emptyTitle}>No active positions</Text>
               <Text style={styles.emptySubtitle}>Create your first bucket</Text>
               <PrimaryButton
@@ -840,8 +846,8 @@ export default function BucketsScreen() {
                   style={styles.multiAssetRow}
                   onPress={() => toggleBucketAsset(symbol)}
                 >
-                  <Ionicons
-                    name={selected ? "checkbox" : "square-outline"}
+                  <IconWrapper
+                    icon={selected ? RecordCircleIcon : CircleIcon}
                     size={18}
                     color={selected ? C.brand.teal : C.text.t2}
                   />

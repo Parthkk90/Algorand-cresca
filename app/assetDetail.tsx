@@ -1,4 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
+
+import { Cancel01Icon, ArrowLeft01Icon, InformationCircleIcon, Add01Icon } from '@hugeicons/core-free-icons';
 import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -19,7 +20,7 @@ import { ASA_ID_TO_PYTH_SYMBOL, SYNTHETIC_ASA_IDS } from "../constants/baskets";
 import { algorandService, AlgorandTransaction } from "../services/algorandService";
 import { positionStore, StoredPosition } from "../services/positionStore";
 import { pythOracleService } from "../services/pythOracleService";
-import { SegmentTabs, StatCard, StatusTag } from "../src/components/ui";
+import { IconWrapper, SegmentTabs, StatCard, StatusTag } from "../src/components/ui";
 import { C, H_PAD, R, S, T } from "../src/theme";
 
 type Timeframe = "1H" | "1D" | "1W" | "1M" | "1Y";
@@ -206,7 +207,7 @@ async function fetchDefiLlamaSeries(symbol: string, timeframe: Timeframe, fallba
     }
 
     const payload = (await response.json()) as {
-      coins?: Record<string, { prices?: Array<{ timestamp?: number; price?: number }> }>;
+      coins?: Record<string, { prices?: { timestamp?: number; price?: number }[] }>;
     };
 
     const entries = payload?.coins?.[meta.llamaKey]?.prices ?? [];
@@ -380,7 +381,7 @@ export default function AssetDetailScreen() {
     previousScrubIndex.current = -1;
   }, [timeframe, assetId, networkFilter, priceQuery.dataUpdatedAt]);
 
-  const chartPoints = priceQuery.data?.points ?? [];
+  const chartPoints = useMemo(() => priceQuery.data?.points ?? [], [priceQuery.data?.points]);
 
   const displayPrice = useMemo(() => {
     if (scrubIndex != null && scrubIndex >= 0 && scrubIndex < chartPoints.length) {
@@ -538,7 +539,7 @@ export default function AssetDetailScreen() {
             accessibilityRole="button"
             accessibilityLabel="Close open position card"
           >
-            <Ionicons name="close" size={14} color={C.text.t1} />
+            <IconWrapper icon={Cancel01Icon} size={14} color={C.text.t1} />
           </TouchableOpacity>
         </View>
 
@@ -557,7 +558,7 @@ export default function AssetDetailScreen() {
           accessibilityLabel="Go back"
           hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
         >
-          <Ionicons name="arrow-back" size={22} color={C.text.t1} />
+          <IconWrapper icon={ArrowLeft01Icon} size={22} color={C.text.t1} />
         </TouchableOpacity>
 
         <Text style={styles.headerTitle} numberOfLines={1}>
@@ -572,7 +573,7 @@ export default function AssetDetailScreen() {
             void Haptics.selectionAsync();
           }}
         >
-          <Ionicons name="information-circle-outline" size={20} color={C.text.t2} />
+          <IconWrapper icon={InformationCircleIcon} size={20} color={C.text.t2} />
         </TouchableOpacity>
       </View>
 
@@ -688,7 +689,7 @@ export default function AssetDetailScreen() {
             void Haptics.selectionAsync();
           }}
         >
-          <Ionicons name="add" size={20} color={C.text.tInv} />
+          <IconWrapper icon={Add01Icon} size={20} color={C.text.tInv} />
         </TouchableOpacity>
 
         <TouchableOpacity
