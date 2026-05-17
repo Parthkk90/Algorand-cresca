@@ -3,7 +3,8 @@
 // Fires a success haptic on mount. Replaces Alert.alert('Payment sent', ...).
 
 import * as Haptics from 'expo-haptics';
-import { Ionicons } from '@expo/vector-icons';
+import { Tick01Icon, Cancel01Icon, ArrowUpRight01Icon } from '@hugeicons/core-free-icons';
+import { IconWrapper } from '../src/components/ui';
 import React, { useEffect, useRef } from 'react';
 import {
   Animated,
@@ -70,7 +71,7 @@ export function TxSuccessCard({
         <Animated.View
           style={[styles.checkCircle, { transform: [{ scale: checkScale }] }]}
         >
-          <Ionicons name="checkmark" size={20} color={Colors.bg.screen} />
+          <IconWrapper icon={Tick01Icon} size={20} color={Colors.bg.screen} />
         </Animated.View>
 
         <View style={styles.textCol}>
@@ -84,7 +85,7 @@ export function TxSuccessCard({
           accessibilityLabel="Dismiss success card"
           hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
         >
-          <Ionicons name="close" size={18} color={Colors.text.muted} />
+          <IconWrapper icon={Cancel01Icon} size={18} color={Colors.text.muted} />
         </TouchableOpacity>
       </View>
 
@@ -95,7 +96,7 @@ export function TxSuccessCard({
         accessibilityLabel="View transaction on explorer"
       >
         <Text style={styles.explorerText}>View on Explorer</Text>
-        <Ionicons name="open-outline" size={13} color={Colors.tertiary} />
+        <IconWrapper icon={ArrowUpRight01Icon} size={13} color={Colors.tertiary} />
       </TouchableOpacity>
     </Animated.View>
   );

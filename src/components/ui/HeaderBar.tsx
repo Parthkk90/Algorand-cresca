@@ -1,4 +1,6 @@
-import { Ionicons } from "@expo/vector-icons";
+
+import { ArrowLeft01Icon, ArrowDown01Icon } from '@hugeicons/core-free-icons';
+import { IconWrapper } from './IconWrapper';
 import React from "react";
 import {
   Image,
@@ -51,7 +53,7 @@ export function HeaderBar({
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <Ionicons name="arrow-back" size={20} color={C.text.t1} />
+          <IconWrapper icon={ArrowLeft01Icon} size={24} color={C.text.t1} accessibilityLabel="Go back" />
         </TouchableOpacity>
 
         <Text style={styles.title} numberOfLines={1}>
@@ -85,7 +87,7 @@ export function HeaderBar({
         </Text>
 
         {showChevron ? (
-          <Ionicons name="chevron-down" size={16} color={C.text.t2} />
+          <IconWrapper icon={ArrowDown01Icon} size={20} color={C.text.t2} accessibilityLabel="Open network selection" />
         ) : null}
       </TouchableOpacity>
 

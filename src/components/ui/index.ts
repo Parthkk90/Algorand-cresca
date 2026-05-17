@@ -2,6 +2,7 @@ export { AssetChip } from "./AssetChip";
 export { CrescaInput } from "./CrescaInput";
 export { CrescaSheet } from "./CrescaSheet";
 export { HeaderBar } from "./HeaderBar";
+export { IconWrapper } from "./IconWrapper";
 export { LiveBadge } from "./LiveBadge";
 export { NetworkAddressRow } from "./NetworkAddressRow";
 export { PrimaryButton } from "./PrimaryButton";

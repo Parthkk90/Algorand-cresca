@@ -8,7 +8,7 @@ export const C = {
     bgSheet: "#FFFFFF",
   },
   brand: {
-    teal: "#00D4AA",
+    teal: "#00D9C0",
     tealDim: "#00B892",
     purple: "#6E56CF",
     purpleDim: "#5A42B8",

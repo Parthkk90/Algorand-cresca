@@ -1,5 +1,13 @@
 // app/_layout.tsx
-import { Ionicons } from '@expo/vector-icons';
+
+import {
+  Home01Icon,
+  ChartLineData01Icon,
+  Layers01Icon,
+  Calendar01Icon,
+  Settings01Icon,
+} from '@hugeicons/core-free-icons';
+import { IconWrapper } from '../src/components/ui';
 import { Tabs, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
@@ -105,22 +113,31 @@ export default function TabLayout() {
   const tabBarStyle = Platform.select({
     ios: {
       position: 'absolute' as const,
+      bottom: 18,
+      left: 18,
+      right: 18,
+      borderRadius: 30,
+      zIndex: 20,
       backgroundColor: 'rgba(23,31,51,0.92)',
-      borderTopWidth: 0.5,
-      borderTopColor: Colors.border,
-      paddingBottom: 20,
+      borderTopWidth: 0,
       height: 85,
-      shadowColor: Colors.primary,
-      shadowOffset: { width: 0, height: -4 },
-      shadowOpacity: 0.15,
-      shadowRadius: 16,
+      paddingBottom: 0,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: -2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
     },
     default: {
+      position: 'absolute' as const,
+      bottom: 18,
+      left: 18,
+      right: 18,
+      borderRadius: 30,
+      zIndex: 20,
       backgroundColor: Colors.bg.card,
-      borderTopWidth: 0.5,
-      borderTopColor: Colors.border,
+      borderTopWidth: 0,
       height: 70,
-      elevation: 12,
+      elevation: 8,
     },
   });
 
@@ -144,7 +161,7 @@ export default function TabLayout() {
                 options={{
                   title: 'Home',
                   tabBarIcon: ({ color, focused }) => (
-                    <Ionicons name={focused ? 'home' : 'home-outline'} color={color} size={24} />
+                    <IconWrapper icon={Home01Icon} focused={focused} color={color} accessibilityLabel="Home tab" />
                   ),
                 }}
               />
@@ -154,7 +171,7 @@ export default function TabLayout() {
                 options={{
                   title: 'Markets',
                   tabBarIcon: ({ color, focused }) => (
-                    <Ionicons name={focused ? 'trending-up' : 'trending-up-outline'} color={color} size={24} />
+                    <IconWrapper icon={ChartLineData01Icon} focused={focused} color={color} accessibilityLabel="Markets tab" />
                   ),
                 }}
               />
@@ -164,7 +181,7 @@ export default function TabLayout() {
                 options={{
                   title: 'Bundles',
                   tabBarIcon: ({ color, focused }) => (
-                    <Ionicons name={focused ? 'flash' : 'flash-outline'} color={color} size={24} />
+                    <IconWrapper icon={Layers01Icon} focused={focused} color={color} accessibilityLabel="Bundles tab" />
                   ),
                 }}
               />
@@ -174,7 +191,7 @@ export default function TabLayout() {
                 options={{
                   title: 'Schedule',
                   tabBarIcon: ({ color, focused }) => (
-                    <Ionicons name={focused ? 'calendar' : 'calendar-outline'} color={color} size={24} />
+                    <IconWrapper icon={Calendar01Icon} focused={focused} color={color} accessibilityLabel="Schedule tab" />
                   ),
                 }}
               />
@@ -184,7 +201,7 @@ export default function TabLayout() {
                 options={{
                   title: 'Settings',
                   tabBarIcon: ({ color, focused }) => (
-                    <Ionicons name={focused ? 'person' : 'person-outline'} color={color} size={22} />
+                    <IconWrapper icon={Settings01Icon} focused={focused} color={color} accessibilityLabel="Settings tab" />
                   ),
                 }}
               />

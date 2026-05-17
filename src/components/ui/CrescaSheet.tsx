@@ -4,7 +4,8 @@ import {
   BottomSheetModal,
   BottomSheetView,
 } from "@gorhom/bottom-sheet";
-import { Ionicons } from "@expo/vector-icons";
+import { Cancel01Icon } from '@hugeicons/core-free-icons';
+import { IconWrapper } from './IconWrapper';
 import React, { useCallback } from "react";
 import {
   StyleProp,
@@ -18,7 +19,7 @@ import { C, R, T } from "../../theme";
 
 type CrescaSheetProps = {
   sheetRef: React.RefObject<BottomSheetModal | null>;
-  snapPoints?: Array<string | number>;
+  snapPoints?: (string | number)[];
   title?: string;
   onClose?: () => void;
   children: React.ReactNode;
@@ -39,7 +40,7 @@ export function CrescaSheet({
         {...props}
         appearsOnIndex={0}
         disappearsOnIndex={-1}
-        opacity={1}
+        opacity={0.3}
         pressBehavior="close"
       />
     ),
@@ -70,7 +71,7 @@ export function CrescaSheet({
                 onClose?.();
               }}
             >
-              <Ionicons name="close" size={20} color={C.text.t1} />
+              <IconWrapper icon={Cancel01Icon} size={20} color={C.text.t1} accessibilityLabel="Close sheet" />
             </TouchableOpacity>
           </View>
         )}
