@@ -7,10 +7,10 @@
 
 // ─── Deployed Testnet App IDs ───────────────────────────────
 export const CONTRACT_APP_IDS = {
-  CrescaPayments: 758849047,
-  CrescaCalendarPayments: 758849049,
-  CrescaBucketProtocol: 758849061,
-  CrescaDartSwap: 758849063,
+  CrescaPayments: 762822694,
+  CrescaCalendarPayments: 762822695,
+  CrescaBucketProtocol: 762824138,
+  CrescaDartSwap: 762822712,
 } as const;
 
 // ─── CrescaCalendarPayments ABI ─────────────────────────────
@@ -25,7 +25,7 @@ export const CALENDAR_METHODS = {
 // ─── CrescaBucketProtocol ABI ───────────────────────────────
 export const BUCKET_METHODS = {
   update_oracle: 'update_oracle(uint64[],uint64[])bool',
-  liquidate_position: 'liquidate_position(address,uint64)bool',
+  liquidate_position: 'liquidate_position(address,uint64,uint64[],uint64)bool',
   get_collateral_balance: 'get_collateral_balance(address)uint64',
   get_unrealized_pnl: 'get_unrealized_pnl(address,uint64)uint64',
   get_total_positions: 'get_total_positions()uint64',

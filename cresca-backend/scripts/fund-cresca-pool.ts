@@ -6,7 +6,7 @@ const algodClient = new algosdk.Algodv2(
   ''
 );
 
-const CRESCA_APP_ID = 758849063;
+const CRESCA_APP_ID = 762822712;
 
 // Your deployer account mnemonic
 const mnemonic = 'YOUR_MNEMONIC_HERE';
@@ -14,7 +14,7 @@ const account = algosdk.mnemonicToSecretKey(mnemonic);
 
 async function fundPool() {
   const params = await algodClient.getTransactionParams().do();
-  
+
   // 1. Opt-in to USDC if needed
   const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
     from: account.addr,
@@ -35,7 +35,7 @@ async function fundPool() {
   // Sign and send
   const signedTxn = fundAlgoTxn.signTxn(account.sk);
   await algodClient.sendRawTransaction(signedTxn).do();
-  
+
   console.log('✅ Pool funded!');
 }
 

@@ -5,7 +5,7 @@ const algod = new algosdk.Algodv2(
   ''
 );
 
-const APP_ID = 758849063;
+const APP_ID = 762822712;
 
 async function main() {
   const boxName = new Uint8Array(Buffer.from('cGxfAAAAAC07Hzo=', 'base64'));

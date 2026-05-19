@@ -20,10 +20,10 @@ import {
 
 // ─── Source-of-truth values from deployed_contracts.json ─────
 const DEPLOYED = {
-  CrescaPayments: 758849047,
-  CrescaCalendarPayments: 758849049,
-  CrescaBucketProtocol: 758849061,
-  CrescaDartSwap: 758849063,
+  CrescaPayments: 762822694,
+  CrescaCalendarPayments: 762822695,
+  CrescaBucketProtocol: 762824138,
+  CrescaDartSwap: 762822712,
 };
 
 describe('CONTRACT_APP_IDS', () => {
@@ -74,7 +74,7 @@ describe('BUCKET_METHODS ABI signatures', () => {
   });
 
   it('liquidate_position matches Python contract', () => {
-    assert.equal(BUCKET_METHODS.liquidate_position, 'liquidate_position(address,uint64)bool');
+    assert.equal(BUCKET_METHODS.liquidate_position, 'liquidate_position(address,uint64,uint64[],uint64)bool');
   });
 
   it('get_collateral_balance matches Python contract', () => {
@@ -218,8 +218,8 @@ describe('uint64ToBytes', () => {
   });
 
   it('encodes large number correctly', () => {
-    const bytes = uint64ToBytes(758849063);
-    assert.equal(Buffer.from(bytes).readBigUInt64BE(0), 758849063n);
+    const bytes = uint64ToBytes(762822712);
+    assert.equal(Buffer.from(bytes).readBigUInt64BE(0), 762822712n);
   });
 
   it('encodes BigInt correctly', () => {
