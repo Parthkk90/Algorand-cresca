@@ -283,7 +283,7 @@ class CrescaBucketProtocol(ARC4Contract):
         return arc4.Bool(True)
 
     # ------------------------------------------------------------------
-    # open_position
+    # open_position (Pyth pull oracle)
     # ------------------------------------------------------------------
     @abimethod
     def open_position(
@@ -291,6 +291,8 @@ class CrescaBucketProtocol(ARC4Contract):
         bucket_id: arc4.UInt64,
         is_long: arc4.Bool,
         margin: arc4.UInt64,
+        asset_prices: arc4.DynamicArray[arc4.UInt64],
+        price_publish_time: arc4.UInt64,
     ) -> arc4.UInt64:
         """
         Open a leveraged long or short position on a bucket.
@@ -299,8 +301,9 @@ class CrescaBucketProtocol(ARC4Contract):
         is_long   — True = long, False = short
         margin    — μALGO to lock from collateral balance
         """
-        # Enforce oracle freshness — reject if keeper hasn't run within ORACLE_MAX_AGE seconds
-        assert Global.latest_timestamp - self.oracle_updated_at.value <= UInt64(ORACLE_MAX_AGE), "Oracle price stale"
+        # Enforce oracle freshness from the supplied publish_time
+        safe_publish_time = self._clamp_publish_time(price_publish_time.native)
+        assert Global.latest_timestamp - safe_publish_time <= UInt64(ORACLE_MAX_AGE), "Oracle price stale"
 
         owner_addr = arc4.Address(Txn.sender)
         bkt_key = _bucket_key(Txn.sender.bytes, bucket_id.native)
@@ -318,8 +321,13 @@ class CrescaBucketProtocol(ARC4Contract):
         # Deduct margin from collateral
         self.collateral[owner_addr] = arc4.UInt64(current_collateral - margin.native)
 
-        # Calculate weighted basket entry price
-        entry_price = self._calculate_basket_price(bucket)
+        assert asset_prices.length == bucket.asset_count.native, "Price count mismatch"
+
+        # Store prices for later read-only views and update oracle timestamp
+        self._store_oracle_prices(bucket, asset_prices, safe_publish_time)
+
+        # Calculate weighted basket entry price using supplied prices
+        entry_price = self._calculate_basket_price_with_prices(bucket, asset_prices)
 
         # Assign position ID from global counter to keep box usage low.
         pos_id = self.total_positions.value
@@ -349,16 +357,22 @@ class CrescaBucketProtocol(ARC4Contract):
         return arc4.UInt64(pos_id)
 
     # ------------------------------------------------------------------
-    # close_position
+    # close_position (Pyth pull oracle)
     # ------------------------------------------------------------------
     @abimethod
-    def close_position(self, position_id: arc4.UInt64) -> arc4.UInt64:
+    def close_position(
+        self,
+        position_id: arc4.UInt64,
+        asset_prices: arc4.DynamicArray[arc4.UInt64],
+        price_publish_time: arc4.UInt64,
+    ) -> arc4.UInt64:
         """
         Close a position and realise P&L back into the collateral balance.
         Returns absolute P&L in μALGO.
         """
-        # Enforce oracle freshness
-        assert Global.latest_timestamp - self.oracle_updated_at.value <= UInt64(ORACLE_MAX_AGE), "Oracle price stale"
+        # Enforce oracle freshness from the supplied publish_time
+        safe_publish_time = self._clamp_publish_time(price_publish_time.native)
+        assert Global.latest_timestamp - safe_publish_time <= UInt64(ORACLE_MAX_AGE), "Oracle price stale"
 
         owner_addr = arc4.Address(Txn.sender)
         pos_key = _position_key(Txn.sender.bytes, position_id.native)
@@ -370,7 +384,12 @@ class CrescaBucketProtocol(ARC4Contract):
 
         bkt_key = _bucket_key(Txn.sender.bytes, pos.bucket_id.native)
         bucket = self.buckets[bkt_key].copy()
-        exit_price = self._calculate_basket_price(bucket)
+        assert asset_prices.length == bucket.asset_count.native, "Price count mismatch"
+
+        # Store prices for later read-only views and update oracle timestamp
+        self._store_oracle_prices(bucket, asset_prices, safe_publish_time)
+
+        exit_price = self._calculate_basket_price_with_prices(bucket, asset_prices)
 
         pnl_abs = self._calculate_pnl_abs(pos, exit_price, bucket.leverage.native)
         is_profit = self._is_profit(pos, exit_price)
@@ -489,20 +508,23 @@ class CrescaBucketProtocol(ARC4Contract):
         return arc4.Bool(True)
 
     # ------------------------------------------------------------------
-    # liquidate_position  (anyone can call)
+    # liquidate_position  (anyone can call, Pyth pull oracle)
     # ------------------------------------------------------------------
     @abimethod
     def liquidate_position(
         self,
         owner: arc4.Address,
         position_id: arc4.UInt64,
+        asset_prices: arc4.DynamicArray[arc4.UInt64],
+        price_publish_time: arc4.UInt64,
     ) -> arc4.Bool:
         """
         Liquidate an undercollateralised position.
         Anyone may call this (keeper/bot pattern — same as Solidity version).
         """
-        # Enforce oracle freshness — stale prices make liquidation invalid
-        assert Global.latest_timestamp - self.oracle_updated_at.value <= UInt64(ORACLE_MAX_AGE), "Oracle price stale"
+        # Enforce oracle freshness from the supplied publish_time
+        safe_publish_time = self._clamp_publish_time(price_publish_time.native)
+        assert Global.latest_timestamp - safe_publish_time <= UInt64(ORACLE_MAX_AGE), "Oracle price stale"
 
         pos_key = _position_key(owner.native.bytes, position_id.native)
         assert pos_key in self.positions, "Position not found"
@@ -512,7 +534,12 @@ class CrescaBucketProtocol(ARC4Contract):
 
         bkt_key = _bucket_key(owner.native.bytes, pos.bucket_id.native)
         bucket = self.buckets[bkt_key].copy()
-        current_price = self._calculate_basket_price(bucket)
+        assert asset_prices.length == bucket.asset_count.native, "Price count mismatch"
+
+        # Store prices for later read-only views and update oracle timestamp
+        self._store_oracle_prices(bucket, asset_prices, safe_publish_time)
+
+        current_price = self._calculate_basket_price_with_prices(bucket, asset_prices)
 
         pnl_abs = self._calculate_pnl_abs(pos, current_price, bucket.leverage.native)
         is_profit = self._is_profit(pos, current_price)
@@ -599,6 +626,76 @@ class CrescaBucketProtocol(ARC4Contract):
     # Internal helpers
     # ------------------------------------------------------------------
     @subroutine
+    def _clamp_publish_time(self, publish_time: UInt64) -> UInt64:
+        # Avoid UInt64 underflow if the oracle timestamp is slightly ahead of the block time.
+        if publish_time > Global.latest_timestamp:
+            return Global.latest_timestamp
+        return publish_time
+
+    @subroutine
+    def _bucket_asset_at(self, bucket: Bucket, idx: UInt64) -> UInt64:
+        # NOTE: assign-then-return rather than `return bucket.<field>.native`.
+        # PuyaPy/mypy treats `.native` as `Any`, which clashes with the
+        # subroutine's declared `-> UInt64`. A typed local satisfies both.
+        result: UInt64 = UInt64(0)
+        if idx == UInt64(0):
+            result = bucket.asset0.native
+        elif idx == UInt64(1):
+            result = bucket.asset1.native
+        elif idx == UInt64(2):
+            result = bucket.asset2.native
+        elif idx == UInt64(3):
+            result = bucket.asset3.native
+        elif idx == UInt64(4):
+            result = bucket.asset4.native
+        elif idx == UInt64(5):
+            result = bucket.asset5.native
+        elif idx == UInt64(6):
+            result = bucket.asset6.native
+        else:
+            result = bucket.asset7.native
+        return result
+
+    @subroutine
+    def _bucket_weight_at(self, bucket: Bucket, idx: UInt64) -> UInt64:
+        result: UInt64 = UInt64(0)
+        if idx == UInt64(0):
+            result = bucket.weight0.native
+        elif idx == UInt64(1):
+            result = bucket.weight1.native
+        elif idx == UInt64(2):
+            result = bucket.weight2.native
+        elif idx == UInt64(3):
+            result = bucket.weight3.native
+        elif idx == UInt64(4):
+            result = bucket.weight4.native
+        elif idx == UInt64(5):
+            result = bucket.weight5.native
+        elif idx == UInt64(6):
+            result = bucket.weight6.native
+        else:
+            result = bucket.weight7.native
+        return result
+
+    @subroutine
+    def _store_oracle_prices(
+        self,
+        bucket: Bucket,
+        asset_prices: arc4.DynamicArray[arc4.UInt64],
+        publish_time: UInt64,
+    ) -> None:
+        n = bucket.asset_count.native
+        for i in urange(n):
+            asset_id = self._bucket_asset_at(bucket, i)
+            price = asset_prices[i].native
+            pkey = _price_key(asset_id)
+            self.prices[pkey] = PriceData(
+                price=arc4.UInt64(price),
+                timestamp=arc4.UInt64(publish_time),
+            )
+        self.oracle_updated_at.value = publish_time
+
+    @subroutine
     def _get_asset_price(self, asset_id: UInt64) -> UInt64:
         """Return oracle price for an asset (defaults to PRICE_PRECISION if not set)."""
         pkey = _price_key(asset_id)
@@ -646,6 +743,25 @@ class CrescaBucketProtocol(ARC4Contract):
                 weight = bucket.weight7.native
 
             price = self._get_asset_price(asset_id)
+            weighted_sum = weighted_sum + (price * weight) // UInt64(100)
+
+        return weighted_sum if weighted_sum > UInt64(0) else UInt64(PRICE_PRECISION)
+
+    @subroutine
+    def _calculate_basket_price_with_prices(
+        self,
+        bucket: Bucket,
+        asset_prices: arc4.DynamicArray[arc4.UInt64],
+    ) -> UInt64:
+        """
+        Weighted average price of all assets in the bucket
+        using supplied prices in the bucket's asset order.
+        """
+        n = bucket.asset_count.native
+        weighted_sum = UInt64(0)
+        for i in urange(n):
+            weight = self._bucket_weight_at(bucket, i)
+            price = asset_prices[i].native
             weighted_sum = weighted_sum + (price * weight) // UInt64(100)
 
         return weighted_sum if weighted_sum > UInt64(0) else UInt64(PRICE_PRECISION)

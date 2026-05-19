@@ -156,6 +156,10 @@ class CrescaCalendarPayments(ARC4Contract):
                 fee=0,
             ).submit()
 
+        # NOTE: must materialise the bool into a local first; passing the
+        # comparison inline as `arc4.Bool(expr)` triggers a PuyaPy codegen
+        # bug where the raw integer is fed into `setbit` (value > 1 error).
+        is_recurring = arc4.Bool(True) if interval_seconds.native > UInt64(0) else arc4.Bool(False)
         arc4.emit(
             "ScheduleCreated(address,uint64,address,uint64,uint64,bool)",
             payer_addr,
@@ -163,7 +167,7 @@ class CrescaCalendarPayments(ARC4Contract):
             recipient,
             amount,
             execute_at,
-            arc4.Bool(interval_seconds.native > UInt64(0)),
+            is_recurring,
         )
 
         return arc4.UInt64(schedule_id)
