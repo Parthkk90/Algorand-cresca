@@ -21,16 +21,16 @@
 
 export const CONTRACT_APP_IDS = {
   /** CrescaPayments — P2P send / batch send / tap-to-pay */
-  CrescaPayments: 758849047,
+  CrescaPayments: 762822694,
 
   /** CrescaCalendarPayments — scheduled & recurring escrow payments */
-  CrescaCalendarPayments: 758849049,
+  CrescaCalendarPayments: 762822695,
 
   /** CrescaBucketProtocol — leveraged basket (long/short) positions */
-  CrescaBucketProtocol: 758849061,
+  CrescaBucketProtocol: 762824138,
 
   /** CrescaDartSwap — on-chain constant-product AMM router */
-  CrescaDartSwap: 758849063,
+  CrescaDartSwap: 762822712,
 } as const;
 
 export type ContractName = keyof typeof CONTRACT_APP_IDS;

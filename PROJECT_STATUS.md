@@ -28,10 +28,10 @@ wallet/
 
 Configured in `services/algorandContractServices.ts` and `services/dartRouterService.ts`:
 
-1. `CrescaPayments`: `758849047`
-2. `CrescaCalendarPayments`: `758849049`
-3. `CrescaBucketProtocol`: `758849061`
-4. `CrescaDartSwap`: `758849063`
+1. `CrescaPayments`: `762822694`
+2. `CrescaCalendarPayments`: `762822695`
+3. `CrescaBucketProtocol`: `762822711`
+4. `CrescaDartSwap`: `762822712`
 
 ## Mobile App Status
 

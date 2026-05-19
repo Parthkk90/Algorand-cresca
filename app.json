@@ -4,7 +4,7 @@
     "slug": "cresca",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/cresca-logo-mark.png",
+    "icon": "./assets/images/cresca_logo.png",
     "scheme": "cresca",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -14,16 +14,14 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/cresca-logo-mark.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/cresca_logo.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/cresca-logo-mark.png"
+      "favicon": "./assets/images/cresca_logo.png"
     },
     "updates": {
       "enabled": false,
@@ -36,7 +34,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/cresca-logo-wordmark.png",
+          "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
