@@ -264,32 +264,40 @@ function MarketRow({
 
   return (
     <TouchableOpacity style={styles.marketRow} onPress={onPress} activeOpacity={0.85}>
-      <View style={styles.assetLeftWrap}>
-        <View style={styles.assetIconCircle}>
-          <Text style={styles.assetIconText}>{asset.symbol.slice(0, 1)}</Text>
-        </View>
-
-        <View style={styles.assetNameWrap}>
-          <Text style={styles.assetName}>{asset.name}</Text>
-          <Text style={styles.assetSymbol}>{asset.symbol}</Text>
-        </View>
+      <View style={styles.assetIconCircle}>
+        <Text style={styles.assetIconText}>{asset.symbol.slice(0, 1)}</Text>
       </View>
 
-      <View style={styles.assetRightWrap}>
-        <Text style={styles.assetPrice}>{formatPrice(asset.price)}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 2 }}>
-          <IconWrapper 
-            icon={positive ? ArrowUp02Icon : ArrowDown02Icon} 
-            size={12} 
-            color={positive ? C.semantic.success : C.semantic.danger} 
-            accessibilityLabel={positive ? "Price up" : "Price down"}
-            style={{ marginRight: 2 }}
-          />
-          <Text style={[styles.assetChange, positive ? styles.positive : styles.negative, { marginTop: 0 }]}>
-            {Math.abs(asset.change24h).toFixed(2)}%
+      <View style={styles.assetBodyWrap}>
+        <View style={styles.assetTopRow}>
+          <Text style={styles.assetName} numberOfLines={1} ellipsizeMode="tail">
+            {asset.name}
+          </Text>
+          <Text style={styles.assetPrice} numberOfLines={1}>
+            {formatPrice(asset.price)}
           </Text>
         </View>
-        <Text style={styles.assetCap}>{formatCompactUsd(asset.marketCap)}</Text>
+
+        <View style={styles.assetBottomRow}>
+          <Text style={styles.assetSymbol} numberOfLines={1}>
+            {asset.symbol} · {formatCompactUsd(asset.marketCap)}
+          </Text>
+          <View style={styles.assetChangeWrap}>
+            <IconWrapper
+              icon={positive ? ArrowUp02Icon : ArrowDown02Icon}
+              size={12}
+              color={positive ? C.semantic.success : C.semantic.danger}
+              accessibilityLabel={positive ? "Price up" : "Price down"}
+              style={{ marginRight: 2 }}
+            />
+            <Text
+              style={[styles.assetChange, positive ? styles.positive : styles.negative]}
+              numberOfLines={1}
+            >
+              {Math.abs(asset.change24h).toFixed(2)}%
+            </Text>
+          </View>
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -914,19 +922,14 @@ const styles = StyleSheet.create({
     borderRadius: R.full,
   },
   marketRow: {
-    height: 64,
+    minHeight: 64,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: C.borders.bDefault,
     paddingHorizontal: H_PAD,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-  },
-  assetLeftWrap: {
-    flexDirection: "row",
-    alignItems: "center",
     gap: 10,
-    flex: 1,
   },
   assetIconCircle: {
     width: 36,
@@ -935,35 +938,54 @@ const styles = StyleSheet.create({
     backgroundColor: C.surfaces.bgSurface,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   assetIconText: {
     ...T.bodyMd,
     color: C.text.t1,
   },
-  assetNameWrap: {
-    gap: 1,
+  assetBodyWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  assetTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  assetBottomRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
   },
   assetName: {
     ...T.bodyMd,
     color: C.text.t1,
+    flexShrink: 1,
+    minWidth: 0,
   },
   assetSymbol: {
     ...T.sm,
     color: C.text.t2,
-  },
-  assetRightWrap: {
-    alignItems: "flex-end",
+    flexShrink: 1,
+    minWidth: 0,
   },
   assetPrice: {
     ...T.bodyMd,
     color: C.text.t1,
+    flexShrink: 0,
+    textAlign: "right",
+  },
+  assetChangeWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 0,
   },
   assetChange: {
     ...T.smBold,
-  },
-  assetCap: {
-    ...T.sm,
-    color: C.text.t2,
   },
   positive: {
     color: C.semantic.success,

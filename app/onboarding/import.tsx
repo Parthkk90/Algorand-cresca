@@ -5,7 +5,6 @@ import algosdk from 'algosdk';
 import bip39 from 'bip39';
 import React, { useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import * as Keychain from 'react-native-keychain';
 import nacl from 'tweetnacl';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { CrescaInput, PrimaryButton } from '../../src/components/ui';
@@ -125,13 +124,9 @@ export default function ImportOnboardingScreen() {
     try {
       const algoMnemonic = deriveAlgorandMnemonic(activeWords);
 
-      await Keychain.setGenericPassword('cresca', algoMnemonic, {
-        service: 'cresca_wallet_mnemonic',
-      });
-      await Keychain.setGenericPassword('cresca', algoMnemonic, {
-        service: 'cresca_seed_phrase',
-      });
-
+      // algorandService.importFromMnemonic stores the mnemonic in expo-secure-store
+      // (hardware-backed keystore). No need to also write to react-native-keychain,
+      // which may not be linked in this build.
       await algorandService.importFromMnemonic(algoMnemonic);
       await AsyncStorage.setItem(WALLET_EXISTS_KEY, '1');
       await AsyncStorage.setItem(ONBOARDING_DONE_KEY, '1');

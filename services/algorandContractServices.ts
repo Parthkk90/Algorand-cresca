@@ -216,7 +216,76 @@ async function callMethod(
     boxes: appBoxes,
   });
 
-  const result = await atc.execute(client, 4);
+  // Readonly methods (named `get_*` / `is_*` on our contracts) don't change
+  // state — running them via `atc.execute()` broadcasts a real transaction
+  // and costs a fee, AND collides with itself if called twice in the same
+  // validity window ("transaction already in ledger"). Run them through
+  // `atc.simulate()` instead: same return value, no broadcast, no collision.
+  const isReadOnly = /^(get_|is_)/.test(methodSig);
+
+  let result;
+  try {
+    if (isReadOnly) {
+      const sim = await atc.simulate(client);
+      const methodResult = sim.methodResults?.[0];
+      const simReturnValue = methodResult?.returnValue;
+      const simTxId = methodResult?.txID ?? '';
+      console.log(`✅ ${methodSig} (simulated) | ${simTxId.slice(0, 8)}...`);
+      return { txId: simTxId, returnValue: simReturnValue };
+    }
+    result = await atc.execute(client, 4);
+  } catch (raw: any) {
+    // algod returns a 400 with a body like:
+    //   "TransactionPool.Remember: transaction <id>: logic eval error: assert failed pc=... \"Insufficient escrow funds\""
+    // The algosdk error wraps that — pull out the useful bit instead of letting "Request failed with status code 400" reach the UI.
+    const body =
+      raw?.response?.body?.message ??
+      raw?.response?.text ??
+      raw?.response?.body ??
+      raw?.message ??
+      String(raw);
+    const text = typeof body === 'string' ? body : JSON.stringify(body);
+
+    const duplicateMatch = text.match(/transaction already in ledger: ([A-Z0-9]+)/);
+    if (duplicateMatch) {
+      const dupTxId = duplicateMatch[1];
+      console.warn(`⚠️ Duplicate txn already in ledger: ${dupTxId}`);
+      return { txId: dupTxId };
+    }
+
+    // Pattern-match common AVM errors first for human-readable messages.
+    let friendly: string;
+    if (/Not yet executable/.test(text)) {
+      friendly = "Schedule isn't due yet — please wait until the scheduled time.";
+    } else if (/Schedule already completed\/cancelled/.test(text)) {
+      friendly = "This schedule is already cancelled or fully executed.";
+    } else if (/Insufficient escrow/.test(text)) {
+      friendly = "The contract escrow has run out — the schedule is exhausted.";
+    } else if (/overspend\s*\(account/.test(text)) {
+      const spentMatch = text.match(/tried to spend ([\d.]+)A/);
+      friendly = spentMatch
+        ? `Wallet doesn't have ${spentMatch[1]} ALGO free to spend right now. ` +
+          `Tap Max again to use the current available amount.`
+        : "Wallet doesn't have enough free ALGO. Refresh and try again.";
+    } else if (/below min \d+ \(\d+ assets\)/.test(text)) {
+      // Phrasing with "(N assets)" only appears for user wallets (contracts
+      // don't opt into ASAs). Apply the user-wallet message here.
+      friendly =
+        "Your wallet doesn't have enough free ALGO — too much is reserved " +
+        "as min-balance for asset opt-ins and created apps. Lower the amount " +
+        "or top up the wallet at the testnet faucet.";
+    } else if (/below min \d+/.test(text)) {
+      friendly = "Wallet balance would drop below the protocol minimum — reduce the amount or fund the wallet.";
+    } else {
+      // Fall back to extracting the contract's assertion string in quotes.
+      const assertion = text.match(/"([^"]+)"/)?.[1];
+      const tealMsg = text.match(/logic eval error:[^\\]*/)?.[0];
+      friendly = assertion ?? tealMsg ?? text.slice(0, 240);
+    }
+    console.error(`❌ ${methodSig} failed:`, text);
+    throw new Error(`Contract call failed: ${friendly}`);
+  }
+
   const txId = result.txIDs[result.txIDs.length - 1];
   const returnValue = result.methodResults?.[0]?.returnValue;
 
@@ -569,8 +638,15 @@ export class CrescaCalendarPaymentsService {
 // ---------------------------------------------------------------------------
 
 export class CrescaBucketProtocolService {
+  private readonly oracleBoxNameBytes = 12; // prc_ + uint64(asset_id)
+  private readonly oracleBoxValueBytes = 16; // PriceData { uint64 price, uint64 timestamp }
+
   private get ownerBytes(): Uint8Array {
     return algosdk.decodeAddress(algorandService.getAccount().addr.toString()).publicKey;
+  }
+
+  private get appAddress(): string {
+    return algosdk.getApplicationAddress(CONTRACT_APP_IDS.CrescaBucketProtocol);
   }
 
   private key(prefix: string, ...parts: Uint8Array[]): Uint8Array {
@@ -582,6 +658,27 @@ export class CrescaBucketProtocolService {
     const buf = Buffer.alloc(8);
     buf.writeBigUInt64BE(BigInt(value));
     return new Uint8Array(buf);
+  }
+
+  private estimateOracleMinBalanceMicro(assetCount: number): number {
+    const base = 100_000; // Protocol minimum balance
+    const boxOverhead = 2_500;
+    const perByte = 400;
+    const perBox = boxOverhead + perByte * (this.oracleBoxNameBytes + this.oracleBoxValueBytes);
+    const reserve = 50_000; // small buffer for safety
+    return base + assetCount * perBox + reserve;
+  }
+
+  private async ensureOracleFunding(assetCount: number): Promise<void> {
+    const client = algorandService.getAlgodClient();
+    const info = await client.accountInformation(this.appAddress).do();
+    const balance = Number(info?.amount ?? 0);
+    const required = this.estimateOracleMinBalanceMicro(assetCount);
+    if (balance >= required) return;
+
+    const topUpMicro = required - balance;
+    const topUpAlgo = topUpMicro / MICROALGO_PER_ALGO;
+    await this.fundContract(topUpAlgo);
   }
 
   private async getCounterBox(prefix: 'bkc_'): Promise<number> {
@@ -619,15 +716,25 @@ export class CrescaBucketProtocolService {
 
     const nextBucketId = await this.getCounterBox('bkc_');
     const owner = this.ownerBytes;
+    // The contract assigns `bucket_id = current_counter`. Our read of that
+    // counter is one round behind reality, so the value the contract
+    // actually picks can be higher than `nextBucketId`. Declare a 4-slot
+    // sliding window of `bkt_*` references so any of the next 4 ids the
+    // contract might choose are covered. AVM caps box refs at 8/txn — we
+    // use 1 (bkc) + 4 (bkt window) = 5, well within budget.
+    const bktSlots = [0, 1, 2, 3].map((offset) => ({
+      appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol,
+      name: this.key('bkt_', owner, this.u64(nextBucketId + offset)),
+    }));
     const appBoxes = [
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('bkc_', owner) },
-      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('bkt_', owner, this.u64(nextBucketId)) },
+      ...bktSlots,
     ];
 
     const { txId, returnValue } = await callMethod(
       CONTRACT_APP_IDS.CrescaBucketProtocol,
       BUCKET_ABI_METHODS.create_bucket,
-      [assetIds, weights, leverage],
+      [assetIds, weights, BigInt(leverage)],
       undefined,
       [],
       appBoxes,
@@ -651,6 +758,17 @@ export class CrescaBucketProtocolService {
       { amount: AlgorandService.algoToMicroAlgo(amountAlgo) },
       [],
       appBoxes,
+    );
+    return txId;
+  }
+
+  /** Fund the bucket contract account to cover box min-balance. */
+  async fundContract(amountAlgo: number): Promise<string> {
+    const { txId } = await callMethod(
+      CONTRACT_APP_IDS.CrescaBucketProtocol,
+      BUCKET_ABI_METHODS.fund_contract,
+      [],
+      { amount: AlgorandService.algoToMicroAlgo(amountAlgo) },
     );
     return txId;
   }
@@ -704,15 +822,34 @@ export class CrescaBucketProtocolService {
     marginAlgo: number,
     assetIds: number[],
   ): Promise<{ txId: string; positionId: number }> {
+    await this.ensureOracleFunding(assetIds.length);
     // Fetch Pyth Hermes prices at call time (<150ms) — no keeper required
     const { prices8dec, publishTime } = await fetchHermesPrices(assetIds);
 
     const owner = this.ownerBytes;
     const nextPositionId = await this.getTotalPositions();
+    // The contract's _store_oracle_prices writes one `prc_<assetId>` box
+    // per asset in the bucket. Every box accessed inside the call must be
+    // declared up-front in the txn's box-ref array, otherwise the AVM
+    // rejects with "invalid Box reference".
+    //
+    // The new pos id chosen by the contract = current `total_positions`,
+    // which can race ahead of our pre-read by a round or two — so declare
+    // a 2-slot sliding window for `pos_*` like we do for `bkt_*`. AVM
+    // caps box refs at 8/txn; with bkt + col + 2×pos + up-to-4 prc, we
+    // sit at ≤ 8.
+    const posSlots = [0, 1].map((offset) => ({
+      appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol,
+      name: this.key('pos_', owner, this.u64(nextPositionId + offset)),
+    }));
     const appBoxes = [
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('bkt_', owner, this.u64(bucketId)) },
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('col_', owner) },
-      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('pos_', owner, this.u64(nextPositionId)) },
+      ...posSlots,
+      ...assetIds.map((id) => ({
+        appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol,
+        name: this.key('prc_', this.u64(id)),
+      })),
     ];
 
     const { txId, returnValue } = await callMethod(
@@ -748,14 +885,21 @@ export class CrescaBucketProtocolService {
     bucketId: number,
     assetIds: number[],
   ): Promise<{ txId: string; pnlAlgo: string }> {
+    await this.ensureOracleFunding(assetIds.length);
     // Fetch Pyth Hermes prices at call time (<150ms) — no keeper required
     const { prices8dec, publishTime } = await fetchHermesPrices(assetIds);
 
     const owner = this.ownerBytes;
+    // close_position also calls _store_oracle_prices → needs every prc_<id>
+    // box declared, same as open_position.
     const appBoxes = [
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('pos_', owner, this.u64(positionId)) },
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('bkt_', owner, this.u64(bucketId)) },
       { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('col_', owner) },
+      ...assetIds.map((id) => ({
+        appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol,
+        name: this.key('prc_', this.u64(id)),
+      })),
     ];
 
     const { txId, returnValue } = await callMethod(
@@ -800,6 +944,7 @@ export class CrescaBucketProtocolService {
    */
   async updateOracle(assetIds: number[], prices: number[]): Promise<string> {
     if (assetIds.length !== prices.length) throw new Error('Length mismatch');
+    await this.ensureOracleFunding(assetIds.length);
     const appBoxes = assetIds.map((assetId) => ({
       appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol,
       name: this.key('prc_', this.u64(assetId)),
@@ -831,12 +976,37 @@ export class CrescaBucketProtocolService {
     positionId: number,
     assetIds: number[],
   ): Promise<string> {
+    await this.ensureOracleFunding(assetIds.length);
     const { prices8dec, publishTime } = await fetchHermesPrices(assetIds);
 
     const ownerBytes = algosdk.decodeAddress(ownerAddress).publicKey;
+    const posKey = this.key('pos_', ownerBytes, this.u64(positionId));
+
+    // Read the position box first to learn its bucket_id (we can't pass it
+    // as a param because the keeper-pattern caller may only know positionId).
+    let bucketId = 0;
+    try {
+      const client = algorandService.getAlgodClient();
+      const posBox = await client
+        .getApplicationBoxByName(CONTRACT_APP_IDS.CrescaBucketProtocol, posKey)
+        .do();
+      const value =
+        typeof posBox.value === 'string'
+          ? new Uint8Array(Buffer.from(posBox.value, 'base64'))
+          : new Uint8Array(posBox.value);
+      if (value.length >= 8) bucketId = Number(Buffer.from(value).readBigUInt64BE(0));
+    } catch {
+      // If we can't read it, fall through — the chain will reject with a
+      // proper "Position not found" / "invalid Box reference" message.
+    }
+
     const appBoxes = [
-      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('pos_', ownerBytes, this.u64(positionId)) },
-      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('bkt_', ownerBytes, this.u64(positionId)) },
+      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: posKey },
+      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: this.key('bkt_', ownerBytes, this.u64(bucketId)) },
+      ...assetIds.map((id) => ({
+        appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol,
+        name: this.key('prc_', this.u64(id)),
+      })),
     ];
 
     const { txId } = await callMethod(
@@ -875,13 +1045,80 @@ export class CrescaBucketProtocolService {
 
   /** Get unrealised P&L for a position in ALGO. */
   async getUnrealizedPnL(ownerAddress: string, positionId: number): Promise<string> {
-    const { returnValue } = await callMethod(
-      CONTRACT_APP_IDS.CrescaBucketProtocol,
-      BUCKET_ABI_METHODS.get_unrealized_pnl,
-      [ownerAddress, positionId],
-    );
-    const micro = Number(returnValue ?? 0);
-    return (micro / MICROALGO_PER_ALGO).toFixed(6);
+    const ownerBytes = algosdk.decodeAddress(ownerAddress).publicKey;
+    const posKey = this.key('pos_', ownerBytes, this.u64(positionId));
+    const client = algorandService.getAlgodClient();
+
+    // The contract reads:
+    //   1. `pos_<addr><id>`      — position box
+    //   2. `bkt_<addr><bucket>`  — bucket box
+    //   3. `prc_<asset_id>`      — one per asset in the bucket (up to 8)
+    // AVM requires every accessed box to be declared in the txn's box ref
+    // array. We don't know bucket_id or the asset ids ahead of time — read
+    // the position box, then the bucket box, then collect the asset ids.
+
+    const readBoxBytes = async (key: Uint8Array): Promise<Uint8Array | null> => {
+      try {
+        const box = await client
+          .getApplicationBoxByName(CONTRACT_APP_IDS.CrescaBucketProtocol, key)
+          .do();
+        return typeof box.value === 'string'
+          ? new Uint8Array(Buffer.from(box.value, 'base64'))
+          : new Uint8Array(box.value);
+      } catch (err: any) {
+        const msg = String(err?.message ?? '');
+        if (msg.includes('box not found') || msg.includes('404')) return null;
+        throw err;
+      }
+    };
+
+    // Step 1: read position box → bucket_id at offset 0
+    const posBytes = await readBoxBytes(posKey);
+    if (!posBytes || posBytes.length < 8) return '0.000000';
+    const bucketId = Number(Buffer.from(posBytes).readBigUInt64BE(0));
+
+    // Step 2: read bucket box → asset_count + asset0..asset_count-1
+    // Bucket struct layout: 8 × asset uint64 (0-63), 8 × weight uint64
+    // (64-127), asset_count uint64 (128-135), leverage (136-143), ...
+    const bktKey = this.key('bkt_', ownerBytes, this.u64(bucketId));
+    const bktBytes = await readBoxBytes(bktKey);
+    if (!bktBytes || bktBytes.length < 136) return '0.000000';
+    const bktBuf = Buffer.from(bktBytes);
+    const assetCount = Math.min(Number(bktBuf.readBigUInt64BE(128)), 8);
+    const assetIds: number[] = [];
+    for (let i = 0; i < assetCount; i++) {
+      assetIds.push(Number(bktBuf.readBigUInt64BE(i * 8)));
+    }
+
+    const appBoxes = [
+      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: posKey },
+      { appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol, name: bktKey },
+      ...assetIds.map((id) => ({
+        appIndex: CONTRACT_APP_IDS.CrescaBucketProtocol,
+        name: this.key('prc_', this.u64(id)),
+      })),
+    ];
+
+    try {
+      const { returnValue } = await callMethod(
+        CONTRACT_APP_IDS.CrescaBucketProtocol,
+        BUCKET_ABI_METHODS.get_unrealized_pnl,
+        [ownerAddress, positionId],
+        undefined,
+        [],
+        appBoxes,
+      );
+      const micro = Number(returnValue ?? 0);
+      return (micro / MICROALGO_PER_ALGO).toFixed(6);
+    } catch (err: any) {
+      // If a referenced box is missing (e.g., already closed/withdrawn),
+      // treat P&L as zero instead of blowing up the whole bucket screen.
+      const msg = String(err?.message ?? '');
+      if (msg.includes('invalid Box reference') || msg.includes('box not found')) {
+        return '0.000000';
+      }
+      throw err;
+    }
   }
 
   /**

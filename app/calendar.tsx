@@ -1,7 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ArrowLeft01Icon,
-  Add01Icon,
   ArrowRight01Icon,
   ArrowDown01Icon,
   Calendar01Icon,
@@ -113,10 +112,15 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
-function toUnixAtNoon(date: Date): number {
+function toUnixWithTime(date: Date, hour: number, minute: number): number {
   const d = new Date(date);
-  d.setHours(12, 0, 0, 0);
-  return Math.floor(d.getTime() / 1000);
+  d.setHours(hour, minute, 0, 0);
+  let ts = Math.floor(d.getTime() / 1000);
+  // Contract asserts execute_at > Global.latest_timestamp. Bump at least
+  // 5 min ahead if the chosen moment has already passed.
+  const minTs = Math.floor(Date.now() / 1000) + 5 * 60;
+  if (ts < minTs) ts = minTs;
+  return ts;
 }
 
 function sanitizeNumeric(raw: string): string {
@@ -219,6 +223,8 @@ export default function CalendarScreen() {
   const [startDate, setStartDate] = useState(startOfDay(new Date()));
   const [startDateDraft, setStartDateDraft] = useState(startOfDay(new Date()));
   const [startDateMonth, setStartDateMonth] = useState(firstDayOfMonth(new Date()));
+  const [startHourInput, setStartHourInput] = useState("12");
+  const [startMinuteInput, setStartMinuteInput] = useState("00");
 
   const [formError, setFormError] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ tone: "error" | "success"; message: string } | null>(null);
@@ -312,8 +318,8 @@ export default function CalendarScreen() {
     );
   };
 
-  const openNewPaymentSheet = () => {
-    const initialStartDate = startOfDay(selectedDate);
+  const openNewPaymentSheet = (forDate?: Date) => {
+    const initialStartDate = startOfDay(forDate ?? selectedDate);
 
     setBanner(null);
     setFormError(null);
@@ -323,9 +329,12 @@ export default function CalendarScreen() {
     setFrequency("weekly");
     setFrequencyDraft("weekly");
     setCustomDaysInput("7");
+    setSelectedDate(initialStartDate);
     setStartDate(initialStartDate);
     setStartDateDraft(initialStartDate);
     setStartDateMonth(firstDayOfMonth(initialStartDate));
+    setStartHourInput("12");
+    setStartMinuteInput("00");
     newPaymentSheetRef.current?.present();
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
@@ -356,27 +365,41 @@ export default function CalendarScreen() {
       return;
     }
 
-    const startTs = toUnixAtNoon(startDate);
+    const hourNum = Number(startHourInput);
+    const minuteNum = Number(startMinuteInput);
+    if (
+      !Number.isInteger(hourNum) ||
+      hourNum < 0 ||
+      hourNum > 23 ||
+      !Number.isInteger(minuteNum) ||
+      minuteNum < 0 ||
+      minuteNum > 59
+    ) {
+      setFormError("Enter a valid time (HH 0-23, MM 0-59)");
+      return;
+    }
+
+    const startTs = toUnixWithTime(startDate, hourNum, minuteNum);
     if (startTs <= Math.floor(Date.now() / 1000)) {
-      setFormError("Start date must be in the future");
+      setFormError("Start date/time must be in the future");
       return;
     }
 
     let intervalSeconds = 7 * 24 * 60 * 60;
-    let occurrences = 12;
+    let occurrences = 4;
 
     if (frequency === "once") {
       intervalSeconds = 0;
       occurrences = 1;
     } else if (frequency === "daily") {
       intervalSeconds = 24 * 60 * 60;
-      occurrences = 30;
+      occurrences = 7;
     } else if (frequency === "weekly") {
       intervalSeconds = 7 * 24 * 60 * 60;
-      occurrences = 12;
+      occurrences = 4;
     } else if (frequency === "monthly") {
       intervalSeconds = 30 * 24 * 60 * 60;
-      occurrences = 12;
+      occurrences = 3;
     } else {
       const customDays = Number(customDaysInput);
       if (!Number.isFinite(customDays) || customDays <= 0) {
@@ -384,7 +407,24 @@ export default function CalendarScreen() {
         return;
       }
       intervalSeconds = Math.floor(customDays) * 24 * 60 * 60;
-      occurrences = 12;
+      occurrences = 4;
+    }
+
+    // Pre-flight: do we have enough ALGO to escrow `amount * occurrences` + fees?
+    try {
+      const required = amount * occurrences;
+      const balance = await algorandService.getBalance();
+      const balanceAlgo = Number(balance.algo);
+      // 0.1 ALGO buffer for fees + box min-balance bump
+      if (Number.isFinite(balanceAlgo) && balanceAlgo < required + 0.1) {
+        setFormError(
+          `Insufficient balance. Need ~${(required + 0.1).toFixed(3)} ALGO ` +
+            `(${amount.toFixed(3)} × ${occurrences} occurrences + fees), have ${balanceAlgo.toFixed(3)}.`,
+        );
+        return;
+      }
+    } catch {
+      // If balance check fails for any reason, fall through and let the chain reject.
     }
 
     try {
@@ -534,14 +574,18 @@ export default function CalendarScreen() {
     const dayIsToday = isSameDay(cell.date, today);
     const selected = isSameDay(cell.date, selectedDate);
     const hasDot = hasScheduledPayment(cell.date);
+    const isPast = startOfDay(cell.date).getTime() < today.getTime();
 
     return (
       <TouchableOpacity
         key={`${cell.date.toISOString()}-day`}
         style={styles.dayCellWrap}
+        disabled={isPast}
         onPress={() => {
-          setSelectedDate(startOfDay(cell.date));
+          const tapped = startOfDay(cell.date);
+          setSelectedDate(tapped);
           void Haptics.selectionAsync();
+          openNewPaymentSheet(tapped);
         }}
       >
         <View
@@ -555,6 +599,7 @@ export default function CalendarScreen() {
             style={[
               styles.dayText,
               !cell.isCurrentMonth && styles.dayTextOut,
+              isPast && styles.dayTextOut,
               dayIsToday && styles.dayTextToday,
               selected && styles.dayTextSelected,
             ]}
@@ -617,10 +662,7 @@ export default function CalendarScreen() {
 
         <Text style={styles.headerTitle}>Scheduled Payments</Text>
 
-        <TouchableOpacity style={styles.newBtn} onPress={openNewPaymentSheet}>
-          <IconWrapper icon={Add01Icon} size={14} color={C.text.t1} />
-          <Text style={styles.newBtnText}>New</Text>
-        </TouchableOpacity>
+        <View style={styles.headerIconBtn} />
       </View>
 
       {banner ? (
@@ -687,8 +729,9 @@ export default function CalendarScreen() {
 
       <CrescaSheet
         sheetRef={newPaymentSheetRef}
-        snapPoints={["90%"]}
+        snapPoints={["95%"]}
         title="Schedule Payment"
+        scrollable
       >
         <View style={styles.sheetContent}>
           <CrescaInput
@@ -767,6 +810,32 @@ export default function CalendarScreen() {
             <IconWrapper icon={Calendar01Icon} size={16} color={C.text.t2} />
           </TouchableOpacity>
 
+          <Text style={styles.sheetLabel}>Start time (24-hour)</Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <CrescaInput
+                label="Hour"
+                placeholder="12"
+                keyboardType="number-pad"
+                value={startHourInput}
+                onChangeText={(text) =>
+                  setStartHourInput(text.replace(/[^0-9]/g, "").slice(0, 2))
+                }
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <CrescaInput
+                label="Minute"
+                placeholder="00"
+                keyboardType="number-pad"
+                value={startMinuteInput}
+                onChangeText={(text) =>
+                  setStartMinuteInput(text.replace(/[^0-9]/g, "").slice(0, 2))
+                }
+              />
+            </View>
+          </View>
+
           <Text style={styles.contractInfoText}>Calendar App ID: {CONTRACT_APP_IDS.CrescaCalendarPayments}</Text>
 
           {formError ? <Text style={styles.formErrorText}>{formError}</Text> : null}
@@ -826,14 +895,39 @@ export default function CalendarScreen() {
               </TouchableOpacity>
             </View>
 
-            {selectedSchedule.active ? (
-              <PrimaryButton
-                label="Execute Now"
-                variant="teal"
-                loading={isExecuting}
-                onPress={() => handleExecuteSchedule(selectedSchedule)}
-              />
-            ) : null}
+            {selectedSchedule.active ? (() => {
+              const nowSec = Math.floor(Date.now() / 1000);
+              const nextExec =
+                selectedSchedule.executeAt +
+                selectedSchedule.executedCount *
+                  selectedSchedule.intervalSeconds;
+              const secondsUntilDue = nextExec - nowSec;
+              const dueNow = secondsUntilDue <= 0;
+
+              const formatWait = (s: number) => {
+                if (s < 60) return `${s}s`;
+                if (s < 3600) return `${Math.ceil(s / 60)} min`;
+                if (s < 86400) return `${Math.ceil(s / 3600)} hr`;
+                return `${Math.ceil(s / 86400)} days`;
+              };
+
+              return (
+                <>
+                  <PrimaryButton
+                    label={dueNow ? "Execute Now" : `Due in ${formatWait(secondsUntilDue)}`}
+                    variant="teal"
+                    loading={isExecuting}
+                    disabled={!dueNow}
+                    onPress={() => handleExecuteSchedule(selectedSchedule)}
+                  />
+                  {!dueNow ? (
+                    <Text style={styles.contractInfoText}>
+                      The keeper bot will fire this automatically when it&apos;s due.
+                    </Text>
+                  ) : null}
+                </>
+              );
+            })() : null}
 
             {selectedSchedule.active ? (
               <TouchableOpacity
@@ -932,7 +1026,7 @@ export default function CalendarScreen() {
               const today = startOfDay(new Date());
               const isToday = isSameDay(cell.date, today);
               const selected = isSameDay(cell.date, startDateDraft);
-              const disabled = startOfDay(cell.date).getTime() <= today.getTime();
+              const disabled = startOfDay(cell.date).getTime() < today.getTime();
 
               return (
                 <TouchableOpacity

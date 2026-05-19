@@ -47,6 +47,7 @@ import { InlineError } from '../components/InlineError';
 import { TxSuccessCard } from '../components/TxSuccessCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getBasket } from '../constants/baskets';
+import { explorerTxUrl } from '../constants/config';
 import { Anim, Colors, Radius, Shadow, Spacing, Typography } from '../constants/theme';
 import { algorandService, AlgorandTransaction } from '../services/algorandService';
 import { positionStore } from '../services/positionStore';
@@ -161,9 +162,14 @@ export default function HomeScreen() {
   const activityHistory = useMemo<HomeActivityRow[]>(() => {
     const transfers: HomeActivityRow[] = txHistory
       .filter((tx) => {
-        if (tx.amount <= 0) return false;
-        if (tx.type === 'sent') return Boolean(tx.receiver);
-        return Boolean(tx.sender);
+        // Keep app calls (appId set) even when amount=0 so scheduled payments,
+        // bucket interactions, swaps etc. show up with a tap-to-explorer link.
+        if (tx.amount <= 0 && tx.appId === undefined) return false;
+        if (tx.amount > 0) {
+          if (tx.type === 'sent') return Boolean(tx.receiver);
+          return Boolean(tx.sender);
+        }
+        return true;
       })
       .map((tx) => ({
       kind: 'transfer',
@@ -807,6 +813,7 @@ export default function HomeScreen() {
                   );
                 }
 
+                const isAppCall = row.tx.amount <= 0 && row.tx.appId !== undefined;
                 const isSent = row.tx.type === 'sent';
                 const algoAmount = (row.tx.amount / 1_000_000).toFixed(4);
                 const counterparty = isSent ? row.tx.receiver : row.tx.sender;
@@ -833,17 +840,19 @@ export default function HomeScreen() {
                     accessibilityRole="button"
                     accessibilityLabel="Open transfer transaction on explorer"
                   >
-                    <View style={[styles.txIcon, isSent ? styles.txIconSent : styles.txIconRecv]}>
+                    <View style={[styles.txIcon, isAppCall ? styles.txIconBundle : isSent ? styles.txIconSent : styles.txIconRecv]}>
                       <IconWrapper
-                        icon={isSent ? ArrowUpRight01Icon : ArrowDownLeft01Icon}
+                        icon={isAppCall ? Invoice01Icon : isSent ? ArrowUpRight01Icon : ArrowDownLeft01Icon}
                         size={16}
-                        color={isSent ? Colors.loss : Colors.gain}
+                        color={isAppCall ? Colors.navy : isSent ? Colors.loss : Colors.gain}
                       />
                     </View>
 
                     <View style={styles.txMeta}>
                       <Text style={styles.txParty} numberOfLines={1}>
-                        {isSent ? 'To ' : 'From '}{shortParty}
+                        {isAppCall
+                          ? (row.tx.label ?? 'App Call')
+                          : (isSent ? 'To ' : 'From ') + shortParty}
                       </Text>
                       {row.tx.note ? (
                         <Text style={styles.txNote} numberOfLines={1}>{row.tx.note}</Text>
@@ -852,9 +861,15 @@ export default function HomeScreen() {
                     </View>
 
                     <View style={styles.txRight}>
-                      <Text style={[styles.txAmount, isSent ? styles.txAmountSent : styles.txAmountRecv]}>
-                        {isSent ? '−' : '+'}{algoAmount} ALGO
-                      </Text>
+                      {isAppCall ? (
+                        <Text style={[styles.txAmount, styles.txAmountBundle]}>
+                          App #{row.tx.appId}
+                        </Text>
+                      ) : (
+                        <Text style={[styles.txAmount, isSent ? styles.txAmountSent : styles.txAmountRecv]}>
+                          {isSent ? '−' : '+'}{algoAmount} ALGO
+                        </Text>
+                      )}
                       <Text style={styles.txExplorerHint}>Tap for explorer ↗</Text>
                     </View>
                   </TouchableOpacity>

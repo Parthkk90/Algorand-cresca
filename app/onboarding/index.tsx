@@ -9,7 +9,6 @@ import * as ScreenCapture from 'expo-screen-capture';
 import algosdk from 'algosdk';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import * as Keychain from 'react-native-keychain';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { C, H_PAD, R, S, T } from '../../src/theme';
 import { appPasswordService } from '../../services/appPasswordService';
@@ -99,12 +98,8 @@ export default function OnboardingWelcomeScreen() {
       setSeedWords(words);
       setSeedVisible(false);
 
-      await Keychain.setGenericPassword('cresca', mnemonic, {
-        service: 'cresca_wallet_mnemonic',
-      });
-      await Keychain.setGenericPassword('cresca', mnemonic, {
-        service: 'cresca_seed_phrase',
-      });
+      // Mnemonic is persisted to expo-secure-store via algorandService.importFromMnemonic
+      // when the user confirms in the seed-reveal sheet. No Keychain write here.
 
       createPasswordSheetRef.current?.dismiss();
       setTimeout(() => {

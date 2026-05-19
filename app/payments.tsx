@@ -1,6 +1,7 @@
 import {
   ArrowLeft01Icon,
   LockKeyIcon,
+  Logout01Icon,
   ViewIcon,
   ViewOffIcon,
   ArrowRight01Icon,
@@ -8,14 +9,17 @@ import {
   MoreHorizontalIcon,
 } from '@hugeicons/core-free-icons';
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import * as ScreenCapture from "expo-screen-capture";
-import * as Keychain from "react-native-keychain";
+import * as SecureStore from "expo-secure-store";
+import { algorandService } from "../services/algorandService";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   ScrollView,
   StyleSheet,
@@ -24,6 +28,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { appPasswordService } from "../services/appPasswordService";
+import { authEmitter } from "../utils/authEmitter";
 import { ScreenContainer } from "../components/ScreenContainer";
 import {
   CrescaInput,
@@ -41,6 +47,7 @@ type NetworkOption = {
   keyService: string;
   addressService: string;
   fallbackAddress: string;
+  isAlgorand?: boolean;
 };
 
 const SESSION_LOCK_OPTIONS = [
@@ -55,6 +62,15 @@ const SESSION_LOCK_OPTIONS = [
 const KEYPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "⌫"] as const;
 
 const NETWORK_OPTIONS: NetworkOption[] = [
+  {
+    id: "algorand",
+    name: "Algorand",
+    color: "#000000",
+    keyService: "cresca_private_algorand",
+    addressService: "cresca_public_algorand",
+    fallbackAddress: "",
+    isAlgorand: true,
+  },
   {
     id: "ethereum",
     name: "Ethereum",
@@ -105,15 +121,15 @@ const NETWORK_OPTIONS: NetworkOption[] = [
   },
 ];
 
-const FALLBACK_SEED_WORDS = Array.from({ length: 12 }, () => "••••");
+const FALLBACK_SEED_WORDS = Array.from({ length: 25 }, () => "••••");
 
-async function getKeychainValue(service: string): Promise<string> {
-  const credentials = await Keychain.getGenericPassword({ service });
-  if (!credentials) {
+async function getSecureValue(key: string): Promise<string> {
+  try {
+    const value = await SecureStore.getItemAsync(key);
+    return value ?? "";
+  } catch {
     return "";
   }
-
-  return credentials.password;
 }
 
 export default function PaymentsScreen() {
@@ -166,19 +182,33 @@ export default function PaymentsScreen() {
       setSeedLoading(true);
 
       try {
-        await ScreenCapture.preventScreenCaptureAsync();
-
-        const seeded = await getKeychainValue("cresca_seed_phrase");
-        if (cancelled) {
-          return;
+        try {
+          await ScreenCapture.preventScreenCaptureAsync();
+        } catch {
+          // ScreenCapture native module may not be linked in dev builds; ignore.
         }
 
-        const words = seeded.trim().length > 0 ? seeded.trim().split(/\s+/).slice(0, 12) : FALLBACK_SEED_WORDS;
-        const withTwelveWords = words.length < 12
-          ? [...words, ...Array.from({ length: 12 - words.length }, () => "••••")]
-          : words;
+        let mnemonic = "";
+        try {
+          mnemonic = await algorandService.exportMnemonic();
+        } catch {
+          mnemonic = "";
+        }
 
-        setSeedWords(withTwelveWords);
+        if (cancelled) return;
+
+        const words = mnemonic.trim().length > 0
+          ? mnemonic.trim().split(/\s+/)
+          : FALLBACK_SEED_WORDS;
+
+        // Algorand mnemonics are 25 words. Pad/truncate to keep the grid stable.
+        const target = words.length >= 25 ? 25 : 12;
+        const padded =
+          words.length < target
+            ? [...words, ...Array.from({ length: target - words.length }, () => "••••")]
+            : words.slice(0, target);
+
+        setSeedWords(padded);
       } finally {
         if (!cancelled) {
           setSeedLoading(false);
@@ -192,7 +222,11 @@ export default function PaymentsScreen() {
       cancelled = true;
       setSeedWords([]);
       setSeedLoading(false);
-      void ScreenCapture.allowScreenCaptureAsync();
+      try {
+        void ScreenCapture.allowScreenCaptureAsync();
+      } catch {
+        // ignore — native module may not be linked
+      }
     };
   }, [isSeedSheetOpen]);
 
@@ -207,19 +241,33 @@ export default function PaymentsScreen() {
       setPublicLoading(true);
 
       try {
-        const [publicFromKeychain, privateFromKeychain] = await Promise.all([
-          getKeychainValue(selectedNetwork.addressService),
-          getKeychainValue(selectedNetwork.keyService),
-        ]);
+        let pub = "";
+        let priv = "";
 
-        if (cancelled) {
-          return;
+        if (selectedNetwork.isAlgorand) {
+          try {
+            pub = algorandService.getAddress();
+          } catch {
+            pub = "";
+          }
+          try {
+            priv = await algorandService.exportMnemonic();
+          } catch {
+            priv = "";
+          }
+        } else {
+          [pub, priv] = await Promise.all([
+            getSecureValue(selectedNetwork.addressService),
+            getSecureValue(selectedNetwork.keyService),
+          ]);
         }
 
+        if (cancelled) return;
+
         setNetworkAddress(
-          publicFromKeychain.trim().length > 0 ? publicFromKeychain : selectedNetwork.fallbackAddress,
+          pub.trim().length > 0 ? pub : selectedNetwork.fallbackAddress,
         );
-        setPrivateKey(privateFromKeychain);
+        setPrivateKey(priv);
       } finally {
         if (!cancelled) {
           setPublicLoading(false);
@@ -347,10 +395,18 @@ export default function PaymentsScreen() {
 
         <Text style={[styles.sectionLabel, styles.protectionLabel]}>Protection</Text>
 
-        <TouchableOpacity style={styles.protectionRow} onPress={() => limitSheetRef.current?.present()}>
+        <TouchableOpacity
+          style={styles.protectionRow}
+          onPress={() => {
+            Alert.alert(
+              "Two-Factor Authentication",
+              "2FA setup is coming soon. Until then, your transactions over the configured allowance will require app password re-entry.",
+            );
+          }}
+        >
           <View style={styles.protectionTextWrap}>
             <Text style={styles.protectionTitle}>2 Factor Authentication</Text>
-            <Text style={styles.protectionSubtitle}>Set Authenticated limit for Transaction</Text>
+            <Text style={styles.protectionSubtitle}>Re-auth required above allowance limit</Text>
           </View>
           <IconWrapper icon={ArrowRight01Icon} size={16} color={C.text.t2} />
         </TouchableOpacity>
@@ -396,6 +452,39 @@ export default function PaymentsScreen() {
             </TouchableOpacity>
           </View>
         ) : null}
+
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          onPress={() => {
+            Alert.alert(
+              "Log out",
+              "You'll be returned to onboarding. Make sure you have your seed phrase backed up.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Log out",
+                  style: "destructive",
+                  onPress: async () => {
+                    try {
+                      appPasswordService.lockSession();
+                      await AsyncStorage.removeItem("cresca_onboarding_completed");
+                      authEmitter.emit(false);
+                      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                      router.replace("/onboarding");
+                    } catch (e) {
+                      Alert.alert("Logout failed", "Please try again.");
+                    }
+                  },
+                },
+              ],
+            );
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Log out"
+        >
+          <IconWrapper icon={Logout01Icon} size={18} color={C.semantic.danger} />
+          <Text style={styles.logoutBtnText}>Log out</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       <CrescaSheet sheetRef={limitSheetRef} snapPoints={["70%"]} title="Set Limit">
@@ -570,6 +659,7 @@ export default function PaymentsScreen() {
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
     backgroundColor: C.surfaces.bgBase,
   },
   header: {
@@ -595,7 +685,8 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: H_PAD,
     paddingTop: S.md,
-    paddingBottom: S.xl,
+    // Leave room for the floating tab bar (bottom:18 + height:~85 + breathing room)
+    paddingBottom: 140,
   },
   sectionLabel: {
     ...T.smBold,
@@ -673,6 +764,22 @@ const styles = StyleSheet.create({
   allowanceValue: {
     ...T.bodyMd,
     color: C.text.t1,
+  },
+  logoutBtn: {
+    marginTop: S.xl,
+    minHeight: 48,
+    borderRadius: R.full,
+    borderWidth: 1,
+    borderColor: C.semantic.danger,
+    backgroundColor: "rgba(240,68,56,0.04)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  logoutBtnText: {
+    ...T.btn,
+    color: C.semantic.danger,
   },
   sheetBody: {
     flex: 1,

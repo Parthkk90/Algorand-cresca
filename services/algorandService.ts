@@ -84,21 +84,24 @@ export interface AlgorandWalletInfo {
 }
 
 export interface AlgorandBalance {
-  algo: string;        // "3.142000"
-  microAlgo: number;   // 3142000
+  algo: string;                // "3.142000" total balance
+  microAlgo: number;           // 3142000 total balance
+  minBalanceMicroAlgo: number; // protocol min balance for the account
+  availableMicroAlgo: number;  // spendable balance after reserve
+  availableAlgo: string;       // spendable balance in ALGO
 }
 
 export interface AlgorandTransaction {
-  txId:       string;
-  sender:     string;
-  receiver:   string;
-  amount:     number;      // μALGO (0 for appl transactions)
-  timestamp:  number;
-  note:       string;
-  fee:        number;
-  type:       'sent' | 'received';
-  label?:     string;      // Human-readable label for appl transactions
-  appId?:     number;      // App ID for appl transactions
+  txId: string;
+  sender: string;
+  receiver: string;
+  amount: number;      // μALGO (0 for appl transactions)
+  timestamp: number;
+  note: string;
+  fee: number;
+  type: 'sent' | 'received';
+  label?: string;      // Human-readable label for appl transactions
+  appId?: number;      // App ID for appl transactions
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +361,10 @@ export class AlgorandService {
     try {
       const info = await client.accountInformation(addr).do();
       const microAlgo: number = Number(info['amount']);
+      const minBalanceMicroAlgo = Number(info['min-balance'] ?? CFG_MIN_BALANCE);
+      const availableMicroAlgo = Math.max(microAlgo - minBalanceMicroAlgo, 0);
       const algo = (microAlgo / MICROALGO_PER_ALGO).toFixed(6);
+      const availableAlgo = (availableMicroAlgo / MICROALGO_PER_ALGO).toFixed(6);
 
       // Cache for cold-start display
       if (!address) {
@@ -366,12 +372,18 @@ export class AlgorandService {
         WalletStorage.updateBalance(algo);
       }
 
-      return { algo, microAlgo };
+      return { algo, microAlgo, minBalanceMicroAlgo, availableMicroAlgo, availableAlgo };
     } catch (err) {
       console.error('❌ Failed to fetch balance:', err);
       // Return cached value on failure
       const cached = await AsyncStorage.getItem(ALGO_STORAGE_KEYS.CACHED_BALANCE);
-      return { algo: cached ?? '0.000000', microAlgo: 0 };
+      return {
+        algo: cached ?? '0.000000',
+        microAlgo: 0,
+        minBalanceMicroAlgo: CFG_MIN_BALANCE,
+        availableMicroAlgo: 0,
+        availableAlgo: '0.000000',
+      };
     }
   }
 
@@ -496,24 +508,24 @@ export class AlgorandService {
         .do();
 
       return (response.transactions ?? []).map((tx: any): AlgorandTransaction => {
-        const pay   = tx['payment-transaction'];
-        const appl  = tx['application-transaction'];
+        const pay = tx['payment-transaction'];
+        const appl = tx['application-transaction'];
         const innerPay = extractInnerPayment(tx);
         const isSent = tx['sender'] === addr;
-        const appId  = appl?.['application-id'] as number | undefined;
+        const appId = appl?.['application-id'] as number | undefined;
 
         return {
-          txId:      tx.id,
-          sender:    tx['sender'],
-          receiver:  pay?.receiver ?? innerPay?.receiver ?? '',
-          amount:    Number(pay?.amount ?? innerPay?.amount ?? 0),
+          txId: tx.id,
+          sender: tx['sender'],
+          receiver: pay?.receiver ?? innerPay?.receiver ?? '',
+          amount: Number(pay?.amount ?? innerPay?.amount ?? 0),
           timestamp: tx['round-time'] ?? 0,
-          note:      tx['note']
+          note: tx['note']
             ? new TextDecoder().decode(Buffer.from(tx['note'], 'base64'))
             : '',
-          fee:       tx['fee'] ?? 0,
-          type:      isSent ? 'sent' : 'received',
-          label:     appId !== undefined
+          fee: tx['fee'] ?? 0,
+          type: isSent ? 'sent' : 'received',
+          label: appId !== undefined
             ? (CRESCA_APP_LABELS[appId] ?? 'App Call')
             : undefined,
           appId,

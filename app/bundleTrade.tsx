@@ -76,8 +76,8 @@ function parseNumericInput(raw: string): string {
     firstDot === -1
       ? normalized
       : `${normalized.slice(0, firstDot + 1)}${normalized
-          .slice(firstDot + 1)
-          .replace(/\./g, "")}`;
+        .slice(firstDot + 1)
+        .replace(/\./g, "")}`;
 
   const [intPart, decimalPart] = compact.split(".");
   if (decimalPart === undefined) return intPart;
@@ -110,10 +110,10 @@ function parseAssetsParam(assetsRaw: string | undefined, fallback: BasketAsset[]
   try {
     const parsed = JSON.parse(assetsRaw) as (| string
       | {
-          symbol?: string;
-          weight?: number;
-          asaId?: number;
-        })[];
+        symbol?: string;
+        weight?: number;
+        asaId?: number;
+      })[];
 
     if (!Array.isArray(parsed) || parsed.length === 0) return fallback;
 
@@ -169,17 +169,26 @@ export default function BundleTradeScreen() {
   const totalValue = Number(params.totalValue ?? 420) || 420;
   const basketId = baseBundle.id;
 
-  const { asaIds, weights } = basketToContractArgs({ ...baseBundle, assets });
-  const symbols = assets.map((asset) => asset.symbol);
+  const { asaIds, weights } = useMemo(
+    () => basketToContractArgs({ ...baseBundle, assets }),
+    [baseBundle, assets],
+  );
+  const symbols = useMemo(() => assets.map((asset) => asset.symbol), [assets]);
 
   const detailSheetRef = useRef<BottomSheetModal | null>(null);
   const confirmSheetRef = useRef<BottomSheetModal | null>(null);
 
   const [isBootstrapping, setIsBootstrapping] = useState(true);
-  const [algoBalance, setAlgoBalance] = useState(0);
+  const [algoAvailable, setAlgoAvailable] = useState(0);
 
-  const [amountUsdc, setAmountUsdc] = useState("");
-  const [leverage, setLeverage] = useState<number>(Math.min(DEFAULT_LEVERAGE, 20));
+  // Input is denominated in ALGO. USD-equivalent figures are derived for
+  // display only (per-asset slice, confirm sheet total, etc.).
+  const [amountAlgo, setAmountAlgo] = useState("");
+  const minLeverage = 1;
+  const maxLeverage = 20;
+  const [leverage, setLeverage] = useState<number>(
+    Math.min(Math.max(DEFAULT_LEVERAGE, minLeverage), maxLeverage),
+  );
   const [action, setAction] = useState<TradeAction>("long");
   const [tradeState, setTradeState] = useState<TradeState>("idle");
 
@@ -204,28 +213,33 @@ export default function BundleTradeScreen() {
 
   // Slider refs for leverage control (0x - 20x)
   const sliderWidthRef = useRef(0);
+  const sliderPageXRef = useRef(0);
+  const sliderRef = useRef<View | null>(null);
   const panX = useRef(new Animated.Value(0)).current;
-  const maxLeverage = 20;
+  const leverageRange = maxLeverage - minLeverage;
+
+  const updateLeverageFromPageX = useCallback((pageX: number) => {
+    const width = sliderWidthRef.current || 1;
+    const localX = pageX - sliderPageXRef.current;
+    const clamped = Math.max(0, Math.min(width, localX));
+    const ratio = clamped / width;
+    const value = Math.round(minLeverage + ratio * leverageRange);
+    setLeverage(value);
+    panX.setValue(clamped);
+  }, [leverageRange, minLeverage, panX]);
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        panX.setOffset((panX as any).__getValue());
+      onPanResponderGrant: (_, gestureState) => {
+        sliderRef.current?.measureInWindow((x) => {
+          sliderPageXRef.current = x;
+          updateLeverageFromPageX(gestureState.x0);
+        });
       },
-      onPanResponderMove: (e, gestureState) => {
-        const dx = gestureState.dx;
-        const width = sliderWidthRef.current || 1;
-        const current = (panX as any).__getValue() + dx;
-        const clamped = Math.max(0, Math.min(width, current));
-        const ratio = clamped / width;
-        const value = Math.round(ratio * maxLeverage * 10) / 10; // 0.1 steps
-        setLeverage(Number(value.toFixed(1)));
-        panX.setValue(clamped);
-      },
-      onPanResponderRelease: () => {
-        panX.flattenOffset();
+      onPanResponderMove: (_, gestureState) => {
+        updateLeverageFromPageX(gestureState.moveX);
       },
     }),
   ).current;
@@ -234,7 +248,10 @@ export default function BundleTradeScreen() {
     sliderWidthRef.current = e.nativeEvent.layout.width;
     // position initial panX according to current leverage
     const width = sliderWidthRef.current || 1;
-    const initial = (leverage / maxLeverage) * width;
+    const ratio = leverageRange > 0
+      ? (leverage - minLeverage) / leverageRange
+      : 0;
+    const initial = ratio * width;
     panX.setValue(initial);
   };
 
@@ -243,7 +260,7 @@ export default function BundleTradeScreen() {
     try {
       await algorandService.initializeWallet();
 
-      const [{ algo }, prices, algoPrice] = await Promise.all([
+      const [{ availableAlgo }, prices, algoPrice] = await Promise.all([
         algorandService.getBalance(),
         pythOracleService.getPrices(symbols),
         pythOracleService.getPrice("ALGO"),
@@ -256,7 +273,7 @@ export default function BundleTradeScreen() {
 
       setUsdPrices(usdMap);
       setAlgoUsd(algoPrice?.price ?? null);
-      setAlgoBalance(Number(algo));
+      setAlgoAvailable(Number(availableAlgo));
     } catch (e: any) {
       setError(e?.message ?? "Failed to initialize bundle trade screen");
     } finally {
@@ -268,9 +285,12 @@ export default function BundleTradeScreen() {
     void initialize();
   }, [initialize]);
 
-  const parsedAmountUsdc = Number(amountUsdc);
-  const safeAmountUsdc = Number.isFinite(parsedAmountUsdc) ? parsedAmountUsdc : 0;
-  const marginAlgo = algoUsd && algoUsd > 0 ? safeAmountUsdc / algoUsd : 0;
+  const parsedAmountAlgo = Number(amountAlgo);
+  const marginAlgo = Number.isFinite(parsedAmountAlgo) && parsedAmountAlgo > 0
+    ? parsedAmountAlgo
+    : 0;
+  // USD-equivalent for downstream display / per-asset slicing.
+  const safeAmountUsdc = algoUsd && algoUsd > 0 ? marginAlgo * algoUsd : 0;
 
   const estimatedAssets = useMemo(() => {
     if (safeAmountUsdc <= 0) return [];
@@ -308,10 +328,8 @@ export default function BundleTradeScreen() {
 
   const canProceed =
     !isBootstrapping &&
-    safeAmountUsdc > 0 &&
     marginAlgo > 0 &&
-    marginAlgo <= algoBalance &&
-    !!algoUsd;
+    marginAlgo <= algoAvailable;
 
   const priceImpactLabel = "< 0.1%";
   const atomicSize = `${assets.length} / 16`;
@@ -319,20 +337,16 @@ export default function BundleTradeScreen() {
   const openConfirmSheet = () => {
     setError(null);
 
-    if (safeAmountUsdc <= 0) {
-      setError("Enter a valid USDC amount.");
+    if (marginAlgo <= 0) {
+      setError("Enter a valid ALGO amount.");
       setTradeState("failed");
       return;
     }
 
-    if (!algoUsd || algoUsd <= 0) {
-      setError("ALGO oracle price unavailable.");
-      setTradeState("failed");
-      return;
-    }
-
-    if (marginAlgo > algoBalance) {
-      setError("Insufficient ALGO collateral for this trade size.");
+    if (marginAlgo > algoAvailable) {
+      setError(
+        `Need ${marginAlgo.toFixed(4)} ALGO but only ${algoAvailable.toFixed(4)} ALGO is spendable.`,
+      );
       setTradeState("failed");
       return;
     }
@@ -341,14 +355,18 @@ export default function BundleTradeScreen() {
     confirmSheetRef.current?.present();
   };
 
-  const executeTrade = async () => {
-    setError(null);
+  // Re-entry guard. tradeState updates are async; a fast double-tap can
+  // fire executeTrade twice before the first call has flipped state to
+  // "sign". A ref check is synchronous and blocks the duplicate run.
+  const tradeInFlight = useRef(false);
 
-    if (!algoUsd || algoUsd <= 0) {
-      setError("ALGO oracle price unavailable.");
-      setTradeState("failed");
+  const executeTrade = async () => {
+    if (tradeInFlight.current) {
+      console.warn("⏸  Trade already in flight — ignoring duplicate Confirm tap");
       return;
     }
+    tradeInFlight.current = true;
+    setError(null);
 
     try {
       setTradeState("sign");
@@ -360,11 +378,21 @@ export default function BundleTradeScreen() {
 
       setTradeState("broadcasting");
 
-      await crescaBucketService.depositCollateral(marginAlgo);
+      // Top up collateral ONLY if existing balance can't cover this trade.
+      // Previously this re-deposited `marginAlgo` on every trade, double-
+      // funding the contract (once via the bucket screen, again per trade)
+      // and draining the wallet.
+      const currentCollateralAlgo = Number(
+        await crescaBucketService.getCollateralBalance(algorandService.getAddress()),
+      );
+      if (currentCollateralAlgo + 1e-6 < marginAlgo) {
+        const shortfall = marginAlgo - currentCollateralAlgo;
+        await crescaBucketService.depositCollateral(shortfall);
+      }
 
       let currentBucketId = bucketId;
       if (currentBucketId === null) {
-        const useLev = Math.min(leverage, 20);
+        const useLev = Math.min(Math.max(Math.round(leverage), minLeverage), maxLeverage);
         const created = await crescaBucketService.createBucket(asaIds, weights, useLev);
         currentBucketId = created.bucketId;
         setBucketId(created.bucketId);
@@ -382,9 +410,10 @@ export default function BundleTradeScreen() {
       await positionStore.add({
         positionId: opened.positionId,
         bucketId: currentBucketId,
+        appId: CONTRACT_APP_IDS.CrescaBucketProtocol,
         basketId,
         asaIds,
-        leverage: Math.min(leverage, 20),
+        leverage: Math.min(Math.max(Math.round(leverage), minLeverage), maxLeverage),
         marginAlgo,
         openedAt: Date.now(),
         txId: opened.txId,
@@ -392,10 +421,10 @@ export default function BundleTradeScreen() {
 
       confirmSheetRef.current?.dismiss();
       setTradeState("confirmed");
-      setAmountUsdc("");
+      setAmountAlgo("");
 
-      const { algo } = await algorandService.getBalance();
-      setAlgoBalance(Number(algo));
+      const { availableAlgo } = await algorandService.getBalance();
+      setAlgoAvailable(Number(availableAlgo));
 
       setTimeout(() => {
         setTradeState("idle");
@@ -403,6 +432,8 @@ export default function BundleTradeScreen() {
     } catch (e: any) {
       setError(e?.message ?? "Trade execution failed.");
       setTradeState("failed");
+    } finally {
+      tradeInFlight.current = false;
     }
   };
 
@@ -451,8 +482,8 @@ export default function BundleTradeScreen() {
                   asset.symbol === "ALGO"
                     ? C.networks.algorand
                     : asset.symbol === "BTC"
-                    ? C.networks.bitcoin
-                    : C.networks.ethereum
+                      ? C.networks.bitcoin
+                      : C.networks.ethereum
                 }
               />
             ))}
@@ -505,6 +536,7 @@ export default function BundleTradeScreen() {
           }}
         >
           <Reanimated.View
+            pointerEvents="none"
             style={[
               styles.toggleIndicator,
               { width: toggleWidth / 2 },
@@ -530,35 +562,48 @@ export default function BundleTradeScreen() {
         {/* Leverage slider (0x - 20x) */}
         <View style={styles.leverageWrap}>
           <Text style={styles.leverageLabel}>Leverage: {leverage}×</Text>
-          <View style={styles.leverageTrack} onLayout={onSliderLayout} {...panResponder.panHandlers}>
+          <View
+            ref={sliderRef}
+            style={styles.leverageTrack}
+            onLayout={onSliderLayout}
+            {...panResponder.panHandlers}
+          >
             <Animated.View style={[styles.leverageFill, { width: (panX as any) }]} />
             <Animated.View style={[styles.leverageHandle, { transform: [{ translateX: (panX as any) }] }]} {...panResponder.panHandlers} />
           </View>
           <View style={styles.leverageLabelsRow}>
-            <Text style={styles.leverageMin}>0x</Text>
+            <Text style={styles.leverageMin}>1x</Text>
             <Text style={styles.leverageMax}>20x</Text>
           </View>
         </View>
 
         <View style={styles.amountWrap}>
           <CrescaInput
-            label="Amount (USDC)"
-            value={amountUsdc}
+            label={
+              algoUsd && algoUsd > 0
+                ? `Margin (ALGO)  ·  ≈ ${formatUsd(safeAmountUsdc)} at current price`
+                : "Margin (ALGO)"
+            }
+            value={amountAlgo}
             onChangeText={(value) => {
-              setAmountUsdc(parseNumericInput(value));
+              setAmountAlgo(parseNumericInput(value));
               setError(null);
               if (tradeState === "failed") setTradeState("idle");
             }}
             keyboardType="decimal-pad"
-            placeholder="0.00"
+            placeholder="0.000000"
             inputStyle={styles.amountInput}
           />
           <View style={styles.amountMetaRow}>
-            <Text style={styles.amountMetaText}>Max: $1,038.56</Text>
+            <Text style={styles.amountMetaText}>
+              Max: {shortValue(algoAvailable, 6)} ALGO
+            </Text>
             <TouchableOpacity
               style={styles.maxBtn}
               onPress={() => {
-                setAmountUsdc("1038.56");
+                // Leave a small buffer for fees + a per-tx 0.005 ALGO safety pad.
+                const safe = Math.max(algoAvailable - 0.005, 0);
+                setAmountAlgo(safe > 0 ? safe.toFixed(6) : "");
                 setError(null);
               }}
               activeOpacity={0.9}
@@ -567,7 +612,7 @@ export default function BundleTradeScreen() {
             </TouchableOpacity>
           </View>
           <Text style={styles.amountMetaHint}>
-            Collateral required: {shortValue(marginAlgo, 6)} ALGO · Wallet: {shortValue(algoBalance, 6)} ALGO
+            Locks {shortValue(marginAlgo, 6)} ALGO of collateral · Available: {shortValue(algoAvailable, 6)} ALGO
           </Text>
         </View>
 
@@ -585,17 +630,25 @@ export default function BundleTradeScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton
-          label={cta.label}
-          loading={cta.loading}
-          variant="black"
-          disabled={!canProceed && tradeState !== "failed"}
-          onPress={openConfirmSheet}
-          style={[
-            action === "short" && styles.sellCta,
-            tradeState === "confirmed" && styles.confirmedCta,
-          ]}
-        />
+        {(() => {
+          const isDisabled = !canProceed && tradeState !== "failed";
+          return (
+            <PrimaryButton
+              label={cta.label}
+              loading={cta.loading}
+              variant="black"
+              disabled={isDisabled}
+              onPress={openConfirmSheet}
+              style={[
+                // Action-colour the CTA only when it can actually be pressed,
+                // so the disabled state stays uniformly grey.
+                !isDisabled && action === "long" && styles.buyCta,
+                !isDisabled && action === "short" && styles.sellCta,
+                tradeState === "confirmed" && styles.confirmedCta,
+              ]}
+            />
+          );
+        })()}
       </View>
 
       <CrescaSheet
@@ -653,8 +706,11 @@ export default function BundleTradeScreen() {
             <Text style={styles.confirmValue}>{bundleName}</Text>
           </View>
           <View style={styles.confirmRow}>
-            <Text style={styles.confirmKey}>Amount</Text>
-            <Text style={styles.confirmValue}>{formatUsd(safeAmountUsdc)} USDC</Text>
+            <Text style={styles.confirmKey}>Margin</Text>
+            <Text style={styles.confirmValue}>
+              {shortValue(marginAlgo, 6)} ALGO
+              {algoUsd && algoUsd > 0 ? `  (≈ ${formatUsd(safeAmountUsdc)})` : ""}
+            </Text>
           </View>
           <View style={styles.confirmRow}>
             <Text style={styles.confirmKey}>Est. received</Text>
@@ -673,7 +729,17 @@ export default function BundleTradeScreen() {
         <PrimaryButton
           label="Confirm & Sign"
           variant="teal"
-          loading={tradeState === "broadcasting"}
+          loading={tradeState === "sign" || tradeState === "broadcasting"}
+          // Hard-disable while a trade is mid-flight so a double-tap or
+          // strict-mode re-render can't fire executeTrade twice. Two parallel
+          // runs race on collateral reads → second deposit duplicates the
+          // first, and the second open_position reads stale collateral and
+          // fails the "Insufficient collateral" assertion.
+          disabled={
+            tradeState === "sign" ||
+            tradeState === "broadcasting" ||
+            tradeState === "confirmed"
+          }
           onPress={() => {
             void executeTrade();
           }}
@@ -933,6 +999,10 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: C.borders.bDefault,
     backgroundColor: C.surfaces.bgBase,
+  },
+  buyCta: {
+    backgroundColor: C.semantic.success,
+    borderColor: C.semantic.success,
   },
   sellCta: {
     backgroundColor: C.semantic.danger,

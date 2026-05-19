@@ -5,7 +5,8 @@ import {
   RecordCircleIcon,
   CircleIcon,
 } from '@hugeicons/core-free-icons';
-import { IconWrapper ,
+import {
+  IconWrapper,
   AssetChip,
   CrescaInput,
   CrescaSheet,
@@ -146,6 +147,10 @@ export default function BucketsScreen() {
 
   const [walletAddress, setWalletAddress] = useState("");
   const [walletAlgo, setWalletAlgo] = useState(0);
+  /** Spendable ALGO = balance − account min-balance reserve.
+   *  This is the actual max you can deposit/transfer without the chain
+   *  rejecting the tx for going below min-balance. */
+  const [walletAlgoAvailable, setWalletAlgoAvailable] = useState(0);
   const [collateralAlgo, setCollateralAlgo] = useState(0);
 
   const [selectedPosition, setSelectedPosition] = useState<StoredPosition | null>(null);
@@ -267,6 +272,7 @@ export default function BucketsScreen() {
       ingestPositionTxRows(storedPositions);
 
       setWalletAlgo(Number(balance.algo) || 0);
+      setWalletAlgoAvailable(Number(balance.availableAlgo) || 0);
       setCollateralAlgo(Number(collateral) || 0);
 
       if (storedPositions.length === 0) {
@@ -317,6 +323,29 @@ export default function BucketsScreen() {
       return;
     }
 
+    // Pre-flight against the LIVE on-chain balance, not the React state.
+    // After a prior deposit succeeds the cached `walletAlgoAvailable` can
+    // be seconds out of date — long enough for the user to over-deposit
+    // and hit a min-balance / overspend rejection at the chain layer.
+    const liveBalance = await algorandService.getBalance(walletAddress);
+    const liveAvailable = Number(liveBalance.availableAlgo) || 0;
+    const liveTotal = Number(liveBalance.algo) || 0;
+    setWalletAlgo(liveTotal);
+    setWalletAlgoAvailable(liveAvailable);
+
+    // Leave a 0.005 ALGO buffer for the txn fee.
+    const safeMax = Math.max(liveAvailable - 0.005, 0);
+    if (amount > safeMax) {
+      const locked = liveTotal - liveAvailable;
+      setErrorMessage(
+        `Max depositable right now is ${safeMax.toFixed(4)} ALGO ` +
+          `(wallet ${liveTotal.toFixed(4)} ALGO, ${locked.toFixed(4)} ALGO locked as ` +
+          `account min-balance for opt-ins / created apps). Top up the wallet ` +
+          `or lower the deposit amount.`,
+      );
+      return;
+    }
+
     setPendingAction("deposit");
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -362,9 +391,27 @@ export default function BucketsScreen() {
           timestamp: Date.now(),
           amountAlgo: withdrawAmount,
         });
+
+        // If the position was already closed on-chain, this withdrawal finalizes
+        // the lifecycle — remove it from My Buckets. The on-chain history
+        // (open + close + withdraw txns) remains visible in home Recent Transactions.
+        if (selectedPosition.closedAt && withdrawPercent === 100) {
+          await positionStore.remove(selectedPosition.positionId);
+          setSelectedPosition(null);
+          setPositions((prev) => prev.filter((p) => p.positionId !== selectedPosition.positionId));
+          setTxHistory((prev) => {
+            const next = { ...prev };
+            delete next[selectedPosition.positionId];
+            return next;
+          });
+        }
       }
 
-      setSuccessMessage("Collateral withdrawn successfully");
+      if (selectedPosition?.closedAt && withdrawPercent === 100) {
+        setSuccessMessage("Withdrawal complete. Position removed from My Buckets.");
+      } else {
+        setSuccessMessage("Collateral withdrawn successfully. Close the position to remove it.");
+      }
       withdrawSheetRef.current?.dismiss();
       await refreshData();
     } catch (error: any) {
@@ -445,10 +492,15 @@ export default function BucketsScreen() {
         amountAlgo: Number(pnlAlgo),
       });
 
-      await positionStore.remove(selectedPosition.positionId);
+      await positionStore.markClosed(selectedPosition.positionId, {
+        closeTxId: txId,
+        realizedPnlAlgo: Number(pnlAlgo),
+      });
       detailSheetRef.current?.dismiss();
       setSelectedPosition(null);
-      setSuccessMessage(`Position closed. Realized P&L: ${Number(pnlAlgo).toFixed(4)} ALGO`);
+      setSuccessMessage(
+        `Position closed. Realized P&L: ${Number(pnlAlgo).toFixed(4)} ALGO. Withdraw funds from My Buckets to finalize.`,
+      );
       await refreshData();
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Close position failed");
@@ -541,6 +593,9 @@ export default function BucketsScreen() {
         <View style={styles.tagRow}>
           <StatusTag label={`Risk: ${risk}`} variant={risk === "High" ? "warning" : risk === "Medium" ? "info" : "success"} />
           <StatusTag label={`${item.position.leverage}x`} variant="purple" />
+          {item.position.closedAt ? (
+            <StatusTag label="Closed · awaiting withdrawal" variant="warning" />
+          ) : null}
         </View>
 
         <View style={styles.cardActionsRow}>
@@ -551,7 +606,7 @@ export default function BucketsScreen() {
               style={styles.cardActionButton}
               onPress={() => {
                 setSelectedPosition(item.position);
-                setWithdrawPercent(25);
+                setWithdrawPercent(item.position.closedAt ? 100 : 25);
                 withdrawSheetRef.current?.present();
               }}
             />
@@ -562,7 +617,9 @@ export default function BucketsScreen() {
               label="Deposit More"
               variant="black"
               style={styles.cardActionButton}
+              disabled={Boolean(item.position.closedAt)}
               onPress={() => {
+                if (item.position.closedAt) return;
                 setSelectedPosition(item.position);
                 setDepositAsset("ALGO");
                 setDepositAmount("");
@@ -767,10 +824,29 @@ export default function BucketsScreen() {
           />
 
           <View style={styles.maxRow}>
-            <Text style={styles.maxLabel}>Max: {formatAlgo(walletAlgo)} ALGO</Text>
+            <Text style={styles.maxLabel}>
+              Available: {formatAlgo(walletAlgoAvailable)} ALGO
+              {walletAlgo > walletAlgoAvailable
+                ? ` (of ${formatAlgo(walletAlgo)} total)`
+                : ""}
+            </Text>
             <TouchableOpacity
               style={styles.maxButton}
-              onPress={() => setDepositAmount(walletAlgo > 0 ? walletAlgo.toFixed(4) : "")}
+              onPress={async () => {
+                // Always fetch live — cached state can be stale after a
+                // recent deposit drained the wallet.
+                try {
+                  const fresh = await algorandService.getBalance(walletAddress);
+                  const avail = Number(fresh.availableAlgo) || 0;
+                  setWalletAlgo(Number(fresh.algo) || 0);
+                  setWalletAlgoAvailable(avail);
+                  const safe = Math.max(avail - 0.01, 0);
+                  setDepositAmount(safe > 0 ? safe.toFixed(4) : "");
+                } catch {
+                  const safe = Math.max(walletAlgoAvailable - 0.01, 0);
+                  setDepositAmount(safe > 0 ? safe.toFixed(4) : "");
+                }
+              }}
             >
               <Text style={styles.maxButtonText}>Max</Text>
             </TouchableOpacity>

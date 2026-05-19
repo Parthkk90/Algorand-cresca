@@ -2,6 +2,7 @@ import {
   BottomSheetBackdrop,
   BottomSheetBackdropProps,
   BottomSheetModal,
+  BottomSheetScrollView,
   BottomSheetView,
 } from "@gorhom/bottom-sheet";
 import { Cancel01Icon } from '@hugeicons/core-free-icons';
@@ -24,6 +25,9 @@ type CrescaSheetProps = {
   onClose?: () => void;
   children: React.ReactNode;
   contentContainerStyle?: StyleProp<ViewStyle>;
+  /** Use a scrolling content container — required when the sheet has text
+   *  inputs that the on-screen keyboard might cover. */
+  scrollable?: boolean;
 };
 
 export function CrescaSheet({
@@ -33,6 +37,7 @@ export function CrescaSheet({
   onClose,
   children,
   contentContainerStyle,
+  scrollable = false,
 }: CrescaSheetProps) {
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (
@@ -54,12 +59,15 @@ export function CrescaSheet({
       snapPoints={snapPoints}
       onDismiss={onClose}
       enablePanDownToClose
+      keyboardBehavior="interactive"
+      keyboardBlurBehavior="restore"
+      android_keyboardInputMode="adjustResize"
       backdropComponent={renderBackdrop}
       backgroundStyle={styles.background}
       handleIndicatorStyle={styles.handle}
     >
-      <BottomSheetView style={[styles.content, contentContainerStyle]}>
-        {(title || onClose) && (
+      {(() => {
+        const header = (title || onClose) ? (
           <View style={styles.header}>
             <Text style={styles.title}>{title ?? ""}</Text>
             <TouchableOpacity
@@ -74,9 +82,29 @@ export function CrescaSheet({
               <IconWrapper icon={Cancel01Icon} size={20} color={C.text.t1} accessibilityLabel="Close sheet" />
             </TouchableOpacity>
           </View>
-        )}
-        {children}
-      </BottomSheetView>
+        ) : null;
+
+        if (scrollable) {
+          return (
+            <BottomSheetScrollView
+              style={styles.scrollFlex}
+              contentContainerStyle={[styles.content, styles.scrollContent, contentContainerStyle]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {header}
+              {children}
+            </BottomSheetScrollView>
+          );
+        }
+
+        return (
+          <BottomSheetView style={[styles.content, contentContainerStyle]}>
+            {header}
+            {children}
+          </BottomSheetView>
+        );
+      })()}
     </BottomSheetModal>
   );
 }
@@ -95,6 +123,14 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
     paddingBottom: 20,
+  },
+  scrollFlex: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    // extra bottom padding so the last input clears the keyboard comfortably
+    paddingBottom: 280,
   },
   header: {
     flexDirection: "row",
